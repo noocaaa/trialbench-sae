@@ -1,0 +1,33 @@
+# TrialBench
+trialbench
+
+# Data
+numpy
+pandas
+scikit-learn
+
+# Deep learning
+torch
+torchvision
+
+# Traditional ML
+xgboost
+
+# Graph neural networks
+torch-geometric
+
+# NLP / Bio-BERT
+transformers
+sentencepiece
+
+# Evaluation & plotting
+matplotlib
+seaborn
+
+# Notebooks
+jupyter
+ipykernel
+
+# Utilities
+tqdm
+pyyaml

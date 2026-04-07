@@ -1,0 +1,52 @@
+# Data — never commit the dataset
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Model checkpoints & weights
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.h5
+*.ckpt
+checkpoints/
+
+# Results
+results/
+
+# IDE
+.vscode/
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+.idea/
+
+# Environment variables
+.env
+*.env
+
+# Logs
+logs/
+*.log
+wandb/
