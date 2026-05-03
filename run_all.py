@@ -1,5 +1,7 @@
 import argparse
-from utils import clear_results, print_results_table, get_best_model
+import importlib
+
+from src.utils import clear_results, print_results_table, get_best_model
 
 PHASES = ["1", "2", "3", "4"]
 
@@ -19,13 +21,12 @@ MODELS = {
 
 def run_model(name, phase):
     module_path, fn_name = MODELS[name]
+
     try:
-        import importlib
         module = importlib.import_module(module_path)
         getattr(module, fn_name)(phase)
     except Exception as e:
         print(f"  [ERROR] {name} | phase {phase}: {e}")
-
 
 def main(models, phases, clear):
     if clear:
