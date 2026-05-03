@@ -5,17 +5,31 @@ Run this after training all models to verify results are trustworthy.
 Usage:
     python sanity_check.py
 """
-import json, glob, os
+
+import json, glob, os, sys
 import numpy as np
 import pandas as pd
+
 from sklearn.dummy import DummyClassifier
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from src.data_loader import load_phase
 from src.evaluate import evaluate
 
 PHASES  = ["1", "2", "3", "4"]
 RESULTS = "results"
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.getcwd())
+
+
+# ── helpers ───────────────────────────────────────────────────────
+def load_results(exclude_loss=True, exclude_dummy=False):
+    files = glob.glob(os.path.join(RESULTS, "*.json"))
+    if exclude_loss:
+        files = [f for f in files if not os.path.basename(f).startswith("loss_")]
+    if exclude_dummy:
+        files = [f for f in files if "Dummy" not in os.path.basename(f)]
+    return sorted(files)
 
 
 # ── 1. Dataset statistics ──────────────────────────────────────────
@@ -28,10 +42,10 @@ def check_dataset():
     for phase in PHASES:
         try:
             X_train, X_test, y_train, y_test, pos_weight = load_phase(phase)
-            n       = len(y_test)
-            pos     = int(y_test.sum())
-            neg     = n - pos
-            ratio   = pos / n
+            n         = len(y_test)
+            pos       = int(y_test.sum())
+            neg       = n - pos
+            ratio     = pos / n
             dummy_acc = max(ratio, 1 - ratio)
             stats.append({
                 "phase": phase, "test_n": n,
@@ -44,7 +58,7 @@ def check_dataset():
             print(f"    Positives (SAE) : {pos}  ({ratio*100:.1f}%)")
             print(f"    Negatives       : {neg}  ({(1-ratio)*100:.1f}%)")
             print(f"    pos_weight      : {pos_weight:.2f}")
-            print(f"    ⚠  Dummy accuracy baseline : {dummy_acc*100:.1f}%  ← your accuracy must beat this")
+            print(f"    Dummy accuracy  : {dummy_acc*100:.1f}%  ← models must beat this")
         except Exception as e:
             print(f"  Phase {phase}: ERROR — {e}")
 
@@ -57,20 +71,19 @@ def check_metric_consistency():
     print("  CHECK 2 — Metric Consistency")
     print("="*55)
 
-    files = glob.glob(os.path.join(RESULTS, "*.json"))
+    files = load_results(exclude_dummy=True)
     if not files:
-        print("  No results found — run your models first.")
+        print("  No results found — run the models first.")
         return
 
     all_ok = True
-    for f in sorted(files):
-        r = json.load(open(f))
+    for f in files:
+        r    = json.load(open(f))
         name = f"{r['model']} Phase {r['phase']}"
-
         issues = []
 
         # F1 should be harmonic mean of precision and recall
-        p, rec, f1 = r.get("precision",0), r.get("recall",0), r.get("f1",0)
+        p, rec, f1 = r.get("precision", 0), r.get("recall", 0), r.get("f1", 0)
         if p + rec > 0:
             expected_f1 = 2 * p * rec / (p + rec)
             if abs(expected_f1 - f1) > 0.01:
@@ -79,7 +92,7 @@ def check_metric_consistency():
         # ROC-AUC must be > 0.5
         roc = r.get("roc_auc", None)
         if roc is not None and not np.isnan(roc) and roc < 0.5:
-            issues.append(f"ROC-AUC = {roc:.4f} < 0.5 (worse than random — labels may be flipped)")
+            issues.append(f"ROC-AUC = {roc:.4f} < 0.5 (worse than random)")
 
         # All metrics must be in [0, 1]
         for met in ["accuracy", "f1", "precision", "recall", "pr_auc"]:
@@ -89,10 +102,11 @@ def check_metric_consistency():
 
         if issues:
             all_ok = False
-            print(f"\n  ❌ {name}:")
-            for issue in issues: print(f"     → {issue}")
+            print(f"\n  ERROR {name}:")
+            for issue in issues:
+                print(f"     → {issue}")
         else:
-            print(f"  ✅ {name}: all metrics consistent")
+            print(f"  OK {name}: all metrics consistent")
 
     if all_ok:
         print("\n  All metrics passed consistency checks!")
@@ -103,13 +117,12 @@ def check_dummy_baseline():
     print("\n" + "="*55)
     print("  CHECK 3 — Dummy Classifier Baseline")
     print("="*55)
-    print("  Your models must beat these scores to be meaningful.\n")
+    print("  Models must beat these scores to be meaningful.\n")
 
     dummy_results = []
     for phase in PHASES:
         try:
             X_train, X_test, y_train, y_test, _ = load_phase(phase)
-
             d = DummyClassifier(strategy="most_frequent")
             d.fit(X_train, y_train)
             y_pred = d.predict(X_test)
@@ -125,38 +138,53 @@ def check_dummy_baseline():
 
 # ── 4. Model vs Dummy comparison ───────────────────────────────────
 def check_vs_dummy(dummy_df):
-    if dummy_df.empty: return
+    if dummy_df.empty:
+        return
     print("\n" + "="*55)
-    print("  CHECK 4 — Your Models vs Dummy")
+    print("  CHECK 4 — Models vs Dummy Baseline")
     print("="*55)
 
-    files = glob.glob(os.path.join(RESULTS, "*.json"))
-    real_results = [json.load(open(f)) for f in files
-                    if "Dummy" not in f]
+    files = load_results(exclude_dummy=True)
+    real_results = [json.load(open(f)) for f in files]
 
     for r in sorted(real_results, key=lambda x: (x["model"], x["phase"])):
-        phase = str(r["phase"])
+        phase     = str(r["phase"])
         dummy_row = dummy_df[dummy_df["phase"] == phase]
-        if dummy_row.empty: continue
+        if dummy_row.empty:
+            continue
 
-        beats_f1  = r["f1"]      > float(dummy_row["f1"].values[0])
-        beats_roc = r.get("roc_auc", 0) > float(dummy_row.get("roc_auc", pd.Series([0])).values[0])
+        beats_f1  = r["f1"] > float(dummy_row["f1"].values[0])
+        beats_roc = r.get("roc_auc", 0) > float(
+            dummy_row.get("roc_auc", pd.Series([0])).values[0])
 
-        icon = "✅" if (beats_f1 and beats_roc) else "❌"
+        icon = "OK" if (beats_f1 and beats_roc) else "ERROR"
         print(f"\n  {icon} {r['model']} Phase {phase}")
-        print(f"     F1      : {r['f1']:.4f}  vs dummy {float(dummy_row['f1'].values[0]):.4f}  {'↑ better' if beats_f1 else '↓ WORSE'}")
-        roc_val = r.get('roc_auc')
-        dummy_roc = float(dummy_row.get('roc_auc', pd.Series([0])).values[0])
+        print(f"     F1      : {r['f1']:.4f}  vs dummy {float(dummy_row['f1'].values[0]):.4f}"
+              f"  {'↑ better' if beats_f1 else '↓ WORSE'}")
+        roc_val   = r.get("roc_auc")
+        dummy_roc = float(dummy_row.get("roc_auc", pd.Series([0])).values[0])
         if roc_val and not np.isnan(roc_val):
-            print(f"     ROC-AUC : {roc_val:.4f}  vs dummy {dummy_roc:.4f}  {'↑ better' if beats_roc else '↓ WORSE'}")
+            print(f"     ROC-AUC : {roc_val:.4f}  vs dummy {dummy_roc:.4f}"
+                  f"  {'↑ better' if beats_roc else '↓ WORSE'}")
 
 
-# ── 5. Confusion matrices ──────────────────────────────────────────
+# ── 5. Confusion matrices — using REAL model predictions ──────────
 def check_confusion_matrices():
     print("\n" + "="*55)
-    print("  CHECK 5 — Confusion Matrices (Logistic Regression proxy)")
+    print("  CHECK 5 — Confusion Matrices (real model predictions)")
     print("="*55)
-    print("  Using LR as a fast proxy — run per model for exact CMs.\n")
+
+    files = load_results(exclude_dummy=True)
+    if not files:
+        print("  No results found — run the models first.")
+        return
+
+    # Check if y_pred is saved in results
+    sample = json.load(open(files[0]))
+    if "y_pred" not in sample:
+        print("  CAREFUL!️  y_pred not found in results.")
+        print("  → Re-run models with the updated evaluate.py to save predictions.")
+        return
 
     os.makedirs(RESULTS, exist_ok=True)
 
@@ -164,41 +192,56 @@ def check_confusion_matrices():
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
 
-        fig = make_subplots(rows=1, cols=len(PHASES),
-                            subplot_titles=[f"Phase {p}" for p in PHASES])
+        # Group by model
+        models = {}
+        for f in files:
+            r = json.load(open(f))
+            models.setdefault(r["model"], {})[str(r["phase"])] = r
 
-        for i, phase in enumerate(PHASES, 1):
-            X_train, X_test, y_train, y_test, _ = load_phase(phase)
-            clf = LogisticRegression(max_iter=500, class_weight="balanced")
-            clf.fit(X_train, y_train)
-            y_pred = clf.predict(X_test)
-            cm = confusion_matrix(y_test, y_pred)
+        n_models = len(models)
+        fig = make_subplots(
+            rows=n_models, cols=len(PHASES),
+            subplot_titles=[f"{m} — Phase {p}"
+                            for m in models for p in PHASES],
+        )
 
-            labels = ["No SAE", "SAE"]
-            pct    = cm / cm.sum() * 100
+        labels = ["No SAE", "SAE"]
+        for row, (model_name, phases) in enumerate(models.items(), 1):
+            for col, phase in enumerate(PHASES, 1):
+                r = phases.get(phase)
+                if not r or "y_pred" not in r:
+                    continue
 
-            text = [[f"{cm[r][c]}<br>({pct[r][c]:.1f}%)"
-                     for c in range(2)] for r in range(2)]
+                y_pred = np.array(r["y_pred"])
+                y_test = np.array(r["y_test"])
+                cm     = confusion_matrix(y_test, y_pred)
+                pct    = cm / cm.sum() * 100
 
-            fig.add_trace(go.Heatmap(
-                z=cm, x=labels, y=labels,
-                text=text, texttemplate="%{text}",
-                colorscale="Blues", showscale=False,
-                textfont=dict(size=12),
-            ), row=1, col=i)
+                text = [[f"{cm[ri][ci]}<br>({pct[ri][ci]:.1f}%)"
+                         for ci in range(2)] for ri in range(2)]
 
-            tn, fp, fn, tp = cm.ravel()
-            print(f"  Phase {phase}: TP={tp}  TN={tn}  FP={fp}  FN={fn}")
-            print(f"    → False Negatives (missed SAEs): {fn}  ← dangerous in medical context")
+                fig.add_trace(go.Heatmap(
+                    z=cm, x=labels, y=labels,
+                    text=text, texttemplate="%{text}",
+                    colorscale="Blues", showscale=False,
+                    textfont=dict(size=11),
+                ), row=row, col=col)
+
+                tn, fp, fn, tp = cm.ravel()
+                print(f"  {model_name} Phase {phase}: "
+                      f"TP={tp}  TN={tn}  FP={fp}  FN={fn}")
+                print(f"    → False Negatives (missed SAEs): {fn}"
+                      f"  ← dangerous in medical context")
 
         fig.update_layout(
-            title="Confusion Matrices — Logistic Regression (proxy)",
+            title="Confusion Matrices — Real Model Predictions",
             paper_bgcolor="#0f0f17", plot_bgcolor="#1a1a2e",
             font=dict(color="#ccccee"),
+            height=300 * n_models,
         )
         out = os.path.join(RESULTS, "confusion_matrices.html")
         fig.write_html(out)
-        print(f"\n  Saved → {out}  (open in browser)")
+        print(f"\n  Saved → {out}")
 
     except Exception as e:
         print(f"  Could not generate plot: {e}")
@@ -207,39 +250,69 @@ def check_confusion_matrices():
 # ── 6. Loss curve check ────────────────────────────────────────────
 def check_loss_curves():
     print("\n" + "="*55)
-    print("  CHECK 6 — Loss Curve Files")
+    print("  CHECK 6 — Loss Curves")
     print("="*55)
 
     files = glob.glob(os.path.join(RESULTS, "loss_*.json"))
     if not files:
-        print("  No loss curves saved yet.")
-        print("  → Add loss history saving to your model run() functions.")
-        print("    Example: save list of epoch losses as results/loss_CNN_1.json")
+        print("  No loss curves saved yet — run your models first.")
         return
 
     try:
         import plotly.graph_objects as go
-        COLORS = ["#7c6af7", "#f7916a", "#6af7c8", "#f7e06a"]
-        fig = go.Figure()
-        for i, f in enumerate(sorted(files)):
-            name = os.path.basename(f).replace("loss_","").replace(".json","")
-            losses = json.load(open(f))
-            fig.add_trace(go.Scatter(
-                x=list(range(1, len(losses)+1)), y=losses,
-                mode="lines+markers", name=name,
-                line=dict(color=COLORS[i % len(COLORS)], width=2),
-            ))
+        from plotly.subplots import make_subplots
+
+        models_found = {}
+        for f in sorted(files):
+            name  = os.path.basename(f).replace("loss_", "").replace(".json", "")
+            parts = name.rsplit("_", 1)
+            model, phase = (parts[0], parts[1]) if len(parts) == 2 else (name, "?")
+            models_found.setdefault(model, {})[phase] = json.load(open(f))
+
+        PHASE_COLORS = {"1": "#7c6af7", "2": "#f7916a", "3": "#6af7c8", "4": "#f7e06a"}
+        n_models = len(models_found)
+        fig = make_subplots(rows=1, cols=n_models,
+                            subplot_titles=list(models_found.keys()))
+
+        for col, (model, phases) in enumerate(models_found.items(), 1):
+            for phase, losses in sorted(phases.items()):
+                epochs = list(range(1, len(losses) + 1))
+                fig.add_trace(go.Scatter(
+                    x=epochs, y=losses,
+                    mode="lines+markers",
+                    name=f"Phase {phase}",
+                    legendgroup=f"Phase {phase}",
+                    showlegend=(col == 1),
+                    line=dict(color=PHASE_COLORS.get(phase, "#ffffff"), width=2),
+                    marker=dict(size=4),
+                ), row=1, col=col)
+
+            for phase, losses in sorted(phases.items()):
+                drop = losses[0] - losses[-1]
+                print(f"  {model} Phase {phase}: "
+                      f"{losses[0]:.4f} → {losses[-1]:.4f}  (↓{drop:.4f})")
+
         fig.update_layout(
-            title="Training Loss Curves",
-            xaxis_title="Epoch", yaxis_title="Loss",
+            title="Training Loss Curves — all models and phases",
             paper_bgcolor="#0f0f17", plot_bgcolor="#1a1a2e",
             font=dict(color="#ccccee"),
-            xaxis=dict(gridcolor="#333355"),
-            yaxis=dict(gridcolor="#333355"),
+            legend=dict(bgcolor="#1a1a2e", bordercolor="#333355"),
         )
+        for i in range(1, n_models + 1):
+            fig.update_xaxes(title_text="Epoch", gridcolor="#333355", row=1, col=i)
+            fig.update_yaxes(title_text="Loss",  gridcolor="#333355", row=1, col=i)
+
         out = os.path.join(RESULTS, "loss_curves.html")
         fig.write_html(out)
-        print(f"  Saved → {out}  (open in browser)")
+        print(f"\n  Saved → {out}")
+
+        for model, phases in models_found.items():
+            for phase, losses in phases.items():
+                if losses[-1] >= losses[0] * 0.95:
+                    print(f"  CAREFUL - {model} Phase {phase}: loss barely decreased — model may not be learning")
+                else:
+                    print(f"    OK    - {model} Phase {phase}: loss converged normally")
+
     except Exception as e:
         print(f"  Could not generate plot: {e}")
 
@@ -250,9 +323,9 @@ if __name__ == "__main__":
     print("  SAE PREDICTION — SANITY CHECK REPORT")
     print("★"*55)
 
-    stats_df  = check_dataset()
+    stats_df = check_dataset()
     check_metric_consistency()
-    dummy_df  = check_dummy_baseline()
+    dummy_df = check_dummy_baseline()
     check_vs_dummy(dummy_df)
     check_confusion_matrices()
     check_loss_curves()
