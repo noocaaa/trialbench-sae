@@ -34,7 +34,6 @@ def train_sklearn_model(model, X_train, X_test, y_train, y_test, model_name, pha
     # Evaluate using your existing evaluation function
     evaluate(y_test, y_pred, y_prob, model_name=model_name, phase=phase)
     
-    # Save model info (optional)
     save_model_info(model, model_name, phase)
     
     return model
@@ -55,4 +54,4 @@ def save_model_info(model, model_name, phase):
         info['n_features_in'] = model.n_features_in_
     
     with open(f"results/{model_name}_{phase}_info.json", "w") as f:
-        json.dump(info, f, indent=2, default=str)
+        json.dump(info, f)
