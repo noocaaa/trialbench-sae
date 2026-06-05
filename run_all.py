@@ -253,7 +253,7 @@ def _get_default_params(name):
     return defaults.get(name, {})
 
 
-def main(models, phases, clear, nested, use_text=False, tune=False):
+def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=False):
     """Run all requested models on all requested phases."""
     set_seed()
 
@@ -292,6 +292,25 @@ def main(models, phases, clear, nested, use_text=False, tune=False):
         get_best_model(metric="f1")
         get_best_model(metric="roc_auc")
 
+    # ── SHAP analysis (post-hoc) ──
+    if run_shap:
+        if not nested:
+            print("\n  [WARNING] --shap requires --nested. Skipping SHAP analysis.")
+        else:
+            print(f"\n{'='*60}\n  SHAP ANALYSIS\n{'='*60}")
+            # Sklearn models
+            sklearn_models = [m for m in models if m in NESTED_MODELS and m not in ("mlp", "cnn", "rnn", "transformer", "ft_transformer")]
+            if sklearn_models:
+                print("\n>> Running SHAP for sklearn models...")
+                from src.shap_analysis import main as shap_main
+                shap_main(sklearn_models, phases, use_text=use_text)
+            # DL models
+            dl_models = [m for m in models if m in ("mlp", "cnn", "rnn", "transformer", "ft_transformer")]
+            if dl_models:
+                print("\n>> Running SHAP for DL models...")
+                from src.shap_analysis_dl import main as shap_dl_main
+                shap_dl_main(dl_models, phases, use_text=use_text)
+
     from src.mlflow_tracker import MLFLOW_TRACKING_URI
     print(f"\n  [MLflow] View results: mlflow ui --backend-store-uri {MLFLOW_TRACKING_URI}")
     print(f"  [MLflow] Or run: python -c \"from src.mlflow_tracker import tracker; tracker.launch_ui()\"")
@@ -329,6 +348,10 @@ if __name__ == "__main__":
         "--tune", action="store_true",
         help="Enable hyperparameter tuning for sklearn models (nested CV only)"
     )
+    parser.add_argument(
+        "--shap", action="store_true",
+        help="Run SHAP analysis after training completes (requires --nested)"
+    )
     args = parser.parse_args()
 
-    main(args.models, args.phases, args.clear, args.nested, use_text=args.use_text, tune=args.tune)
+    main(args.models, args.phases, args.clear, args.nested, use_text=args.use_text, tune=args.tune, run_shap=args.shap)
