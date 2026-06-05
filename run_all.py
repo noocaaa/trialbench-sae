@@ -38,11 +38,13 @@ from sklearn.svm import LinearSVC
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.neighbors import KNeighborsClassifier
 from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 from models.mlp import MLP
 from models.cnn import CNN
 from models.rnn import RNN
 from models.transformer import Transformer
+from models.ft_transformer import FTTransformer
 
 
 PHASES = ["1", "2", "3", "4"]
@@ -61,6 +63,8 @@ SIMPLE_MODELS = {
     "svm":                 ("models.svm",                 "run"),
     "knn":                 ("models.knn",                 "run"),
     "xgboost":             ("models.xgboost_model",       "run"),
+    "lightgbm":            ("models.lightgbm_model",      "run"),
+    "ft_transformer":      ("models.ft_transformer",      "run"),
 }
 
 # Model registry for nested CV: name -> (is_tree, is_dl, display_name)
@@ -74,6 +78,8 @@ NESTED_MODELS = {
     "cnn":                 (False, True,  "CNN"),
     "rnn":                 (False, True,  "RNN"),
     "transformer":         (False, True,  "Transformer"),
+    "lightgbm":            (True,  False, "LightGBM"),
+    "ft_transformer":      (False, True,  "FT-Transformer"),
 }
 
 
@@ -111,6 +117,14 @@ def _make_factory(name):
         return lambda **kwargs: RNN(kwargs["input_dim"])
     elif name == "transformer":
         return lambda **kwargs: Transformer(kwargs["input_dim"])
+    elif name == "lightgbm":
+        return lambda **kwargs: LGBMClassifier(
+            n_estimators=100, max_depth=-1, learning_rate=0.1,
+            num_leaves=31, subsample=0.8, colsample_bytree=0.8,
+            objective='binary', random_state=42, n_jobs=-1, verbose=-1,
+        )
+    elif name == "ft_transformer":
+        return lambda **kwargs: FTTransformer(kwargs["input_dim"])
     else:
         raise ValueError(f"Unknown model: {name}")
 

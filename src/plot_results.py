@@ -33,9 +33,10 @@ C = {
 
 MODEL_COLORS = {
     "MLP": "#8b5cf6", "CNN": "#3b82f6", "RNN": "#06b6d4",
-    "Transformer": "#10b981", "LogisticRegression": "#f59e0b",
+    "Transformer": "#10b981", "FT-Transformer": "#14b8a6",
+    "LogisticRegression": "#f59e0b",
     "RandomForest": "#f97316", "XGBoost": "#ec4899",
-    "SVM": "#ef4444", "KNN": "#a78bfa",
+    "LightGBM": "#84cc16", "SVM": "#ef4444", "KNN": "#a78bfa",
 }
 PHASE_COLORS = {"1": "#8b5cf6", "2": "#3b82f6", "3": "#06b6d4", "4": "#10b981"}
 

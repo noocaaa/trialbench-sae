@@ -16,6 +16,8 @@ SPECIAL_CASES = {
     "cnn": "CNN",
     "rnn": "RNN",
     "transformer": "Transformer",
+    "lightgbm": "LightGBM",
+    "ft_transformer": "FT-Transformer",
 }
 
 def load_fold_results(results_dir="results"):
