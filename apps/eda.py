@@ -858,7 +858,7 @@ def run():
             fig.update_layout(**base_layout, title="Select a feature above")
         return fig
 
-    print("\n  EDA Dashboard → http://127.0.0.1:8052\n")
+    print("\n  EDA Dashboard -> http://127.0.0.1:8052\n")
     app.run(debug=False, use_reloader=False, port=8052)
 
 

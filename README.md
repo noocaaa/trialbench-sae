@@ -1,6 +1,6 @@
 # TrialBench — Serious Adverse Event Prediction
 
-> Comparison of 7 AI methods for predicting serious adverse events in clinical trials.
+> Comparison of 9 AI methods for predicting serious adverse events in clinical trials.
 
 **Reference:** Chen et al., *Scientific Data* 12:1564 (2025) — [https://doi.org/10.1038/s41597-025-05680-8](https://doi.org/10.1038/s41597-025-05680-8)
 
@@ -39,15 +39,17 @@ trialbench-sae-prediction/
 │   └── utils.py                       # Helper functions for results
 │
 ├── models/                            # One file per model — only architecture + run()
-│   ├── cnn.py                         # 1D Convolutional Network        
-│   ├── rnn.py                         # LSTM Recurrent Network          
-│   ├── transformer.py                 # Transformer Encoder             
-│   ├── mlp.py                         # Multi-Layer Perceptron          
-│   ├── logistic_regression.py         # Logistic Regression            
-│   ├── random_forest.py               # Random Forest                   
-│   └── xgboost.py                     # XGBoost                         
+│   ├── mlp.py                         # Multi-Layer Perceptron
+│   ├── cnn.py                         # 1D Convolutional Network
+│   ├── rnn.py                         # LSTM Recurrent Network
+│   ├── transformer.py                 # Transformer Encoder
+│   ├── logistic_regression.py         # Logistic Regression
+│   ├── random_forest.py               # Random Forest
+│   ├── svm.py                         # Support Vector Machine
+│   ├── knn.py                         # K-Nearest Neighbors
+│   └── xgboost_model.py               # XGBoost Gradient Boosting
 │
-├── notebooks/
+├── apps/
 │   └── eda.py                         # Exploratory Data Analysis — 4-tab dashboard
 │
 ├── results/                           # Auto-generated — one JSON per model × phase
@@ -99,7 +101,7 @@ trialbench.function.download_all_data("data/")
 python run_all.py --models mlp cnn rnn transformer
 
 # Run classical ML models
-python run_all.py --models logistic_regression random_forest xgboost
+python run_all.py --models logistic_regression random_forest svm knn
 
 # Run specific phases only
 python run_all.py --models mlp --phases 1 2
@@ -111,7 +113,7 @@ python run_all.py --clear
 python src/plot_results.py        # → http://127.0.0.1:8050
 
 # EDA dashboard
-python notebooks/eda.py           # → http://127.0.0.1:8052
+python apps/eda.py                # → http://127.0.0.1:8052
 
 # Validate all results
 python sanity_check.py
@@ -125,13 +127,16 @@ All deep learning models use the **same hyperparameters** for fair comparison:
 
 | Parameter | Value | Why |
 |---|---|---|
-| `EPOCHS` | 30 | Enough for all models to converge |
+| `EPOCHS` | 100 | Max epochs; early stopping usually kicks in first |
 | `LR` | 3e-4 | Lower than default — needed for Transformer stability |
 | `BATCH_SIZE` | 64 | Standard, matches TrialBench paper |
 | `OPTIMIZER` | AdamW | Better generalization than Adam via weight decay |
 | `WEIGHT_DECAY` | 1e-4 | Regularization |
 | `SCHEDULER` | CosineAnnealingLR | Smooth lr decay for better convergence |
 | `GRAD_CLIP` | 1.0 | Prevents exploding gradients (critical for Transformer) |
+| `VAL_SPLIT` | 0.15 | 15% of training data held out for validation |
+| `PATIENCE` | 5 | Early stopping: stop if val loss does not improve for 5 epochs |
+| `TUNE_THRESHOLD` | True | Find optimal decision threshold on validation set |
 
 ---
 
@@ -172,7 +177,7 @@ Results are saved automatically to `results/` after each run.
 
 > Run `python src/plot_results.py` for the interactive dashboard.
 > 
-> Run `python sanity_check.py` for the full validation report.
+> Run `python sanity_check.py` for the full validation report (dataset stats, metric consistency, dummy baseline comparison, confusion matrices, and loss curve analysis).
 
 
 **Class balance per phase:**
@@ -183,6 +188,8 @@ Results are saved automatically to `results/` after each run.
 | 2 | 8,116 | 74.6% | Imbalanced | 0.39 |
 | 3 | 4,840 | 84.7% | Very imbalanced | 0.18 |
 | 4 | 2,946 | 38.5% | Balanced | 1.67 |
+
+> **⚠️ Interpreting metrics:** Phases 2 & 3 are heavily imbalanced. A dummy classifier that always predicts "SAE" achieves F1 ≈ 0.86–0.92 in these phases. **Use ROC-AUC as the primary metric** — it is invariant to class imbalance and a dummy always scores 0.5. Run `python sanity_check.py` to see dummy baselines and verify your models are genuinely learning.
 
 ---
 
@@ -197,6 +204,6 @@ Results are saved automatically to `results/` after each run.
 ## Authors
 
 - **Noelia Carrasco** — Deep Learning models (MLP, CNN, RNN, Transformer) + EDA + data pipeline + dashboards
-- **Fahad Alsofyani** — Classical ML models (LR, RF, XGBoost) + Report
+- **Fahad Alsofyani** — Classical ML models (LR, RF, SVM, KNN) + Report
 
 AI4Science course — Dr. Tianfan Fu, Nanjing University

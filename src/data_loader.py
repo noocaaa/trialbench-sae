@@ -51,18 +51,16 @@ def set_seed(seed=SEED):
     torch.backends.cudnn.benchmark     = False
 
 
-set_seed()
-
-
-def load_phase(phase, data_dir=None, verbose=False):
+def load_phase(phase, data_dir=None, verbose=False, for_tree=False):
     """
     Load train/test splits for a given phase.
 
     Parameters
     ----------
-    phase   : str  — "1", "2", "3", or "4"
-    data_dir: str  — path to dataset root. If None uses data/ in project root.
-    verbose : bool — if True prints feature selection summary
+    phase    : str  — "1", "2", "3", or "4"
+    data_dir : str  — path to dataset root. If None uses data/ in project root.
+    verbose  : bool — if True prints feature selection summary
+    for_tree : bool — if True, use OrdinalEncoder + no scaling for tree-based models
 
     Returns
     -------
@@ -70,29 +68,57 @@ def load_phase(phase, data_dir=None, verbose=False):
     y_train, y_test : np.ndarray — binary labels (0/1)
     pos_weight      : float      — neg/pos ratio for BCEWithLogitsLoss
     """
+    if phase not in ("1", "2", "3", "4"):
+        raise ValueError(f"phase must be one of '1', '2', '3', '4', got {phase!r}")
+
     if data_dir is None:
         data_dir = _DEFAULT_DATA
 
     base = os.path.join(data_dir, f"Phase{phase}")
 
-    X_train = pd.read_csv(os.path.join(base, "train_x.csv"))
-    y_train = pd.read_csv(os.path.join(base, "train_y.csv"))
-    X_test  = pd.read_csv(os.path.join(base, "test_x.csv"))
-    y_test  = pd.read_csv(os.path.join(base, "test_y.csv"))
+    if not os.path.isdir(base):
+        raise FileNotFoundError(f"Dataset directory not found: {base}")
+
+    train_x_path = os.path.join(base, "train_x.csv")
+    train_y_path = os.path.join(base, "train_y.csv")
+    test_x_path  = os.path.join(base, "test_x.csv")
+    test_y_path  = os.path.join(base, "test_y.csv")
+
+    for p in (train_x_path, train_y_path, test_x_path, test_y_path):
+        if not os.path.isfile(p):
+            raise FileNotFoundError(f"Required file not found: {p}")
+
+    X_train = pd.read_csv(train_x_path)
+    y_train = pd.read_csv(train_y_path)
+    X_test  = pd.read_csv(test_x_path)
+    y_test  = pd.read_csv(test_y_path)
 
     y_train = y_train["Y/N"].values.astype(int)
     y_test  = y_test["Y/N"].values.astype(int)
 
-    X_train, X_test = _preprocess(X_train, X_test, phase=phase, verbose=verbose)
+    if y_train.ndim != 1 or y_test.ndim != 1:
+        raise ValueError("y_train and y_test must be 1-dimensional")
+
+    if len(set(np.unique(y_train)) - {0, 1}) > 0:
+        raise ValueError("y_train contains non-binary values (must be 0 or 1)")
+
+    X_train, X_test = _preprocess(
+        X_train, X_test, phase=phase, verbose=verbose, for_tree=for_tree
+    )
+
+    if X_train.shape[0] != y_train.shape[0]:
+        raise ValueError(f"X_train/y_train shape mismatch: {X_train.shape[0]} vs {y_train.shape[0]}")
+    if X_test.shape[0] != y_test.shape[0]:
+        raise ValueError(f"X_test/y_test shape mismatch: {X_test.shape[0]} vs {y_test.shape[0]}")
 
     neg = (y_train == 0).sum()
     pos = (y_train == 1).sum()
-    pos_weight = float(neg / pos)
+    pos_weight = float(neg / pos) if pos > 0 else 1.0
 
     return X_train, X_test, y_train, y_test, pos_weight
 
 
-def _preprocess(X_train, X_test, phase="?", verbose=False):
+def _preprocess(X_train, X_test, phase="?", verbose=False, for_tree=False):
     n_original = len(X_train.columns)
 
     # ── Step 1: drop ID column and text columns ───────────────────
@@ -115,20 +141,38 @@ def _preprocess(X_train, X_test, phase="?", verbose=False):
     X_test  = X_test.drop(columns=high_null, errors="ignore")
     n_after_null = len(X_train.columns)
 
-    # ── Step 4: encode categorical columns → numeric ───────────────
-    for col in X_train.select_dtypes(include="object").columns:
-        X_train[col] = X_train[col].astype("category").cat.codes
-        X_test[col]  = X_test[col].astype("category").cat.codes
+    # ── Step 4: encode categorical columns ─────────────────────────
+    cat_cols = X_train.select_dtypes(include="object").columns.tolist()
+    if cat_cols:
+        if for_tree:
+            # Tree models: ordinal encoding (no dummies, no scaling later)
+            from sklearn.preprocessing import OrdinalEncoder
+            for col in cat_cols:
+                fill_val = X_train[col].mode().iloc[0] if not X_train[col].mode().empty else "missing"
+                X_train[col] = X_train[col].fillna(fill_val)
+                X_test[col] = X_test[col].fillna(fill_val)
+            oe = OrdinalEncoder(
+                handle_unknown="use_encoded_value", unknown_value=-1
+            )
+            X_train[cat_cols] = oe.fit_transform(X_train[cat_cols])
+            X_test[cat_cols] = oe.transform(X_test[cat_cols])
+        else:
+            # Other models: one-hot encoding
+            X_train = pd.get_dummies(X_train, columns=cat_cols, dummy_na=False)
+            X_test = pd.get_dummies(X_test, columns=cat_cols, dummy_na=False)
+            # Align test columns to train (handle unseen categories in either split)
+            X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
 
     # ── Step 5: impute remaining missing values with median ────────
     imputer = SimpleImputer(strategy="median")
     X_train = imputer.fit_transform(X_train)
     X_test  = imputer.transform(X_test)
 
-    # ── Step 6: standardize ────────────────────────────────────────
-    scaler  = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test  = scaler.transform(X_test)
+    # ── Step 6: standardize (skip for tree-based models) ───────────
+    if not for_tree:
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test = scaler.transform(X_test)
 
     # ── Summary ───────────────────────────────────────────────────
     if verbose:

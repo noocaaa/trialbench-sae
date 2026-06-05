@@ -1,6 +1,7 @@
 import torch.nn as nn
+from src import config
 from src.data_loader import load_phase
-from src.train import train_model
+from src.train import train_model, DEVICE   
 
 
 class RNN(nn.Module):
@@ -11,12 +12,12 @@ class RNN(nn.Module):
     def __init__(self, input_dim, hidden_dim=64):
         super().__init__()
         self.lstm = nn.LSTM(input_size=1, hidden_size=hidden_dim,
-                            num_layers=2, batch_first=True, dropout=0.1)
+                            num_layers=2, batch_first=True, dropout=config.DROPOUT)
         self.fc = nn.Sequential(
             nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, 32),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(config.DROPOUT),
             nn.Linear(32, 1),
         )
 
@@ -28,6 +29,6 @@ class RNN(nn.Module):
 
 def run(phase, **kwargs):
     X_train, X_test, y_train, y_test, pos_weight = load_phase(phase)
-    train_model(RNN(X_train.shape[1]),
+    train_model(RNN(X_train.shape[1]).to(DEVICE),
                 X_train, X_test, y_train, y_test,
                 pos_weight, model_name="RNN", phase=phase, **kwargs)

@@ -6,24 +6,34 @@ import json, os
 import numpy as np
 
 
-def evaluate(y_true, y_pred, y_prob, model_name, phase, save=True):
+def evaluate(y_true, y_pred, y_prob, model_name, phase, save=True, threshold=None, save_path=None):
     """
     Evaluate a binary classifier and optionally save results to disk.
 
     Parameters
     ----------
     y_true     : array of int (0/1)  — ground truth labels from the test set
-    y_pred     : array of int (0/1)  — hard binary predictions (threshold 0.5)
+    y_pred     : array of int (0/1)  — hard binary predictions
     y_prob     : array of float      — predicted probability for the positive class (label=1)
     model_name : str                 — model label, e.g. "CNN", "Random Forest"
     phase      : str                 — trial phase, e.g. "1", "2", "3", "4"
     save       : bool                — if True, saves results to results/<model_name>_<phase>.json
+    threshold  : float or None       — classification threshold used (saved for reference)
 
     Returns
     -------
     dict with keys: model, phase, accuracy, f1, precision, recall, roc_auc, pr_auc,
-                    y_pred, y_test  ← saved for confusion matrix in sanity_check
+                    threshold, y_pred, y_test
     """
+    # Guard against single-class test sets
+    unique_labels = np.unique(y_true)
+    if len(unique_labels) > 1:
+        roc_auc = roc_auc_score(y_true, y_prob)
+        pr_auc  = average_precision_score(y_true, y_prob)
+    else:
+        roc_auc = np.nan
+        pr_auc  = np.nan
+
     metrics = {
         "model":     model_name,
         "phase":     phase,
@@ -31,12 +41,15 @@ def evaluate(y_true, y_pred, y_prob, model_name, phase, save=True):
         "f1":        f1_score(y_true, y_pred, zero_division=0),
         "precision": precision_score(y_true, y_pred, zero_division=0),
         "recall":    recall_score(y_true, y_pred, zero_division=0),
-        "roc_auc":   roc_auc_score(y_true, y_prob),
-        "pr_auc":    average_precision_score(y_true, y_prob),
+        "roc_auc":   roc_auc,
+        "pr_auc":    pr_auc,
         # ── saved for real confusion matrices in sanity_check ─────
         "y_pred":    np.array(y_pred).tolist(),
         "y_test":    np.array(y_true).tolist(),
     }
+
+    if threshold is not None:
+        metrics["threshold"] = round(float(threshold), 4)
 
     print(f"\n  === {model_name} | Phase {phase} ===")
     for k, v in metrics.items():
@@ -45,9 +58,12 @@ def evaluate(y_true, y_pred, y_prob, model_name, phase, save=True):
 
     if save:
         os.makedirs("results", exist_ok=True)
-        fname = f"results/{model_name.replace(' ', '_')}_{phase}.json"
+        if save_path is not None:
+            fname = save_path
+        else:
+            fname = f"results/{model_name.replace(' ', '_')}_{phase}.json"
         with open(fname, "w") as f:
             json.dump(metrics, f, indent=2)
-        print(f"  Saved → {fname}")
+        print(f"  Saved -> {fname}")
 
     return metrics

@@ -1,13 +1,57 @@
 # src/train.py — Shared training loop for all deep learning models
 
+import copy
 import json
 import os
 import torch
 import torch.nn as nn
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, TensorDataset
 
 from src import config
 from src.evaluate import evaluate
+from src.utils import find_best_threshold
+
+# GPU or CPU automatic detection and selection
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if torch.backends.mps.is_available()
+    else "cpu"
+)
+
+print(f"Using device: {DEVICE}")
+
+class AsymmetricBCEWithLogitsLoss(nn.Module):
+    """
+    BCE loss with asymmetric penalty for medical false negatives.
+
+    In SAE prediction, a False Negative (missed adverse event) is far more
+    dangerous than a False Positive (unnecessary caution). This loss applies
+    FN_PENALTY and FP_PENALTY as multipliers on a per-sample basis.
+    """
+    def __init__(self, pos_weight=None, fn_penalty=None, fp_penalty=None):
+        super().__init__()
+        self.fn_penalty = fn_penalty if fn_penalty is not None else config.FN_PENALTY
+        self.fp_penalty = fp_penalty if fp_penalty is not None else config.FP_PENALTY
+        self.pos_weight = pos_weight
+
+    def forward(self, logits, targets):
+        # Base BCE loss per sample (no reduction)
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, targets,
+            pos_weight=self.pos_weight,
+            reduction="none",
+        )
+
+        # Identify error types using logits (logit < 0 → sigmoid < 0.5)
+        fn_mask = (targets == 1) & (logits < 0)   # FN: should be 1, predicted 0
+        fp_mask = (targets == 0) & (logits >= 0)  # FP: should be 0, predicted 1
+
+        weights = torch.ones_like(bce)
+        weights = torch.where(fn_mask, self.fn_penalty, weights)
+        weights = torch.where(fp_mask, self.fp_penalty, weights)
+
+        return (bce * weights).mean()
 
 
 def train_model(
@@ -20,6 +64,15 @@ def train_model(
     epochs=None,
     batch_size=None,
     lr=None,
+    patience=None,
+    val_split=None,
+    cal_split=None,
+    X_val=None,
+    y_val=None,
+    X_cal=None,
+    y_cal=None,
+    save_artifacts=True,
+    skip_eval=False,
 ):
     """
     Shared training loop for all deep learning models.
@@ -37,58 +90,220 @@ def train_model(
     epochs     : int        — overrides config.EPOCHS if provided
     batch_size : int        — overrides config.BATCH_SIZE if provided
     lr         : float      — overrides config.LR if provided
+    patience   : int        — overrides config.PATIENCE if provided
+    val_split  : float      — overrides config.VAL_SPLIT if provided
+    cal_split  : float      — overrides config.CAL_SPLIT if provided
+    X_val, y_val : optional pre-split validation set (bypasses internal val_split)
+    X_cal, y_cal : optional pre-split calibration set (bypasses internal cal_split)
+    save_artifacts : bool
+        If False, skip saving results, checkpoints, and loss curves.
+        Useful for inner CV loops where only the threshold matters.
+    skip_eval : bool
+        If True, skip the final evaluate() call. Useful when the caller
+        only needs the trained model or threshold (e.g. inner CV).
+
+    Returns
+    -------
+    dict — metrics from evaluate() (empty dict if skip_eval=True)
     """
-    epochs     = epochs     or config.EPOCHS
-    batch_size = batch_size or config.BATCH_SIZE
-    lr         = lr         or config.LR
+    epochs     = epochs     if epochs     is not None else config.EPOCHS
+    batch_size = batch_size if batch_size is not None else config.BATCH_SIZE
+    lr         = lr         if lr         is not None else config.LR
+    patience   = patience   if patience   is not None else config.PATIENCE
+    val_split  = val_split  if val_split  is not None else config.VAL_SPLIT
+    cal_split  = cal_split  if cal_split  is not None else config.CAL_SPLIT
+
+    # ── Step 1: Separate calibration set for threshold tuning ─────
+    # If pre-split calibration set is provided, use it directly.
+    # Otherwise, split from training data.
+    if X_cal is not None and y_cal is not None:
+        X_temp, y_temp = X_train, y_train
+    elif cal_split > 0:
+        X_temp, X_cal, y_temp, y_cal = train_test_split(
+            X_train, y_train, test_size=cal_split,
+            random_state=42, stratify=y_train,
+        )
+    else:
+        X_temp, y_temp = X_train, y_train
+        X_cal, y_cal = None, None
+
+    # ── Step 2: From remaining data, separate validation for early stopping ──
+    # If pre-split validation set is provided, use it directly.
+    # Otherwise, split from remaining training data.
+    if X_val is not None and y_val is not None:
+        X_tr, y_tr = X_temp, y_temp
+    elif val_split > 0:
+        # Adjust proportion since X_temp is (1 - cal_split) of original
+        adjusted_val_split = val_split / (1 - cal_split) if cal_split > 0 and X_cal is None else val_split
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            X_temp, y_temp, test_size=adjusted_val_split,
+            random_state=43, stratify=y_temp,
+        )
+    else:
+        X_tr, y_tr = X_temp, y_temp
+        X_val, y_val = None, None  # no validation split; no early stopping
 
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_train),
-            torch.tensor(y_train, dtype=torch.float32),
+            torch.tensor(X_tr).to(DEVICE),
+            torch.tensor(y_tr, dtype=torch.float32).to(DEVICE),
         ),
         batch_size=batch_size, shuffle=True,
     )
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=lr, weight_decay=config.WEIGHT_DECAY
+    # ── Optimizer ─────────────────────────────────────────────────
+    opt_name = config.OPTIMIZER.lower()
+    if opt_name == "adamw":
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=lr, weight_decay=config.WEIGHT_DECAY
+        )
+    elif opt_name == "adam":
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=config.WEIGHT_DECAY
+        )
+    elif opt_name == "sgd":
+        optimizer = torch.optim.SGD(
+            model.parameters(), lr=lr, weight_decay=config.WEIGHT_DECAY, momentum=0.9
+        )
+    else:
+        raise ValueError(f"Unknown optimizer in config: {config.OPTIMIZER}")
+
+    # ── Loss function (asymmetric for medical safety) ───────────
+    criterion = AsymmetricBCEWithLogitsLoss(
+        pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
     )
-    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]))
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=epochs, eta_min=lr / 10
-    )
+
+    # ── Scheduler ─────────────────────────────────────────────────
+    sched_name = config.SCHEDULER.lower()
+    if sched_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs, eta_min=lr / 10
+        )
+    elif sched_name == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=10, gamma=0.1
+        )
+    elif sched_name == "none":
+        scheduler = None
+    else:
+        raise ValueError(f"Unknown scheduler in config: {config.SCHEDULER}")
+
+    # ── Cache tensors that never change during training ───────────
+    X_val_tensor = torch.tensor(X_val).to(DEVICE) if X_val is not None else None
+    X_cal_tensor = torch.tensor(X_cal).to(DEVICE) if X_cal is not None else None
+    X_test_tensor = torch.tensor(X_test).to(DEVICE)
+
+    # ── Early stopping state ──────────────────────────────────────
+    best_val_loss = float("inf")
+    best_state = None
+    epochs_no_improve = 0
+    stopped_early = False
 
     history = []
     for epoch in range(epochs):
+        # ── Training ──────────────────────────────────────────────
         model.train()
         total_loss = 0
         for X_batch, y_batch in train_loader:
             optimizer.zero_grad()
             loss = criterion(model(X_batch), y_batch)
             loss.backward()
-            if config.GRAD_CLIP:
+            if config.GRAD_CLIP is not None:
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_norm=config.GRAD_CLIP
                 )
             optimizer.step()
             total_loss += loss.item()
 
-        avg = total_loss / len(train_loader)
-        history.append(round(avg, 6))
-        scheduler.step()
-        print(f"  Epoch {epoch+1}/{epochs} — loss: {avg:.4f}"
-              f"  lr: {scheduler.get_last_lr()[0]:.2e}")
+        train_loss = total_loss / len(train_loader)
 
-    # Save loss curve
-    os.makedirs("results", exist_ok=True)
-    with open(f"results/loss_{model_name}_{phase}.json", "w") as f:
-        json.dump(history, f)
+        # ── Validation ────────────────────────────────────────────
+        if val_split > 0:
+            model.eval()
+            with torch.no_grad():
+                val_logits = model(X_val_tensor)
+                val_loss = criterion(
+                    val_logits,
+                    torch.tensor(y_val, dtype=torch.float32).to(DEVICE),
+                ).item()
+        else:
+            val_loss = train_loss
+
+        history.append({
+            "train_loss": round(train_loss, 6),
+            "val_loss": round(val_loss, 6),
+        })
+
+        # ── Scheduler step ────────────────────────────────────────
+        if scheduler is not None:
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()[0]
+        else:
+            current_lr = lr
+
+        print(f"  Epoch {epoch+1:2d}/{epochs} — "
+              f"train_loss: {train_loss:.4f}  val_loss: {val_loss:.4f}  "
+              f"lr: {current_lr:.2e}")
+
+        # ── Early stopping check ──────────────────────────────────
+        if val_split > 0:
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_state = copy.deepcopy(model.state_dict())
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+
+            if epochs_no_improve >= patience:
+                print(f"  Early stopping triggered (no improvement for {patience} epochs). "
+                      f"Restoring best model from epoch {epoch + 1 - patience}.")
+                stopped_early = True
+                break
+        else:
+            # No validation split: save the latest state each epoch
+            best_state = copy.deepcopy(model.state_dict())
+
+    # ── Restore best model ────────────────────────────────────────
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    elif stopped_early:
+        print("  WARNING: early stopping triggered but no best state found.")
+
+    # Save loss curve and checkpoint (only if save_artifacts=True)
+    if save_artifacts:
+        os.makedirs("results", exist_ok=True)
+        with open(f"results/loss_{model_name}_{phase}.json", "w") as f:
+            json.dump(history, f)
+
+        if best_state is not None:
+            os.makedirs("models/checkpoints", exist_ok=True)
+            checkpoint_path = f"models/checkpoints/{model_name}_{phase}.pt"
+            torch.save(best_state, checkpoint_path)
+            print(f"  Checkpoint saved -> {checkpoint_path}")
+
+    # ── Threshold tuning on calibration set ──
+    threshold = 0.5
+    if config.TUNE_THRESHOLD and X_cal is not None:
+        model.eval()
+        with torch.no_grad():
+            cal_logits = model(X_cal_tensor)
+            y_prob_cal = torch.sigmoid(cal_logits).cpu().numpy()
+        threshold = find_best_threshold(y_cal, y_prob_cal, criterion=config.THRESHOLD_CRITERION)
+        if save_artifacts:
+            print(f"  Optimal threshold ({config.THRESHOLD_CRITERION}): {threshold:.4f}")
 
     # Evaluate on test set
     model.eval()
     with torch.no_grad():
-        logits = model(torch.tensor(X_test))
-        y_prob = torch.sigmoid(logits).numpy()
-        y_pred = (y_prob >= 0.5).astype(int)
+        logits = model(X_test_tensor)
+        y_prob = torch.sigmoid(logits).cpu().numpy()
+        y_pred = (y_prob >= threshold).astype(int)
 
-    evaluate(y_test, y_pred, y_prob, model_name=model_name, phase=phase)
+    if skip_eval:
+        return {}
+
+    return evaluate(
+        y_test, y_pred, y_prob,
+        model_name=model_name, phase=phase, threshold=threshold,
+        save=save_artifacts,
+    )

@@ -1,6 +1,7 @@
 import torch.nn as nn
+from src import config
 from src.data_loader import load_phase
-from src.train import train_model
+from src.train import train_model, DEVICE
 
 
 class CNN(nn.Module):
@@ -24,7 +25,7 @@ class CNN(nn.Module):
             nn.Flatten(),
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(config.DROPOUT),
             nn.Linear(32, 1),
         )
 
@@ -36,6 +37,6 @@ class CNN(nn.Module):
 
 def run(phase, **kwargs):
     X_train, X_test, y_train, y_test, pos_weight = load_phase(phase)
-    train_model(CNN(X_train.shape[1]),
+    train_model(CNN(X_train.shape[1]).to(DEVICE),
                 X_train, X_test, y_train, y_test,
                 pos_weight, model_name="CNN", phase=phase, **kwargs)

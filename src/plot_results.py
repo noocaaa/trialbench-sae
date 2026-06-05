@@ -35,6 +35,7 @@ MODEL_COLORS = {
     "MLP": "#8b5cf6", "CNN": "#3b82f6", "RNN": "#06b6d4",
     "Transformer": "#10b981", "LogisticRegression": "#f59e0b",
     "RandomForest": "#f97316", "XGBoost": "#ec4899",
+    "SVM": "#ef4444", "KNN": "#a78bfa",
 }
 PHASE_COLORS = {"1": "#8b5cf6", "2": "#3b82f6", "3": "#06b6d4", "4": "#10b981"}
 
@@ -56,7 +57,9 @@ def get_model_color(model):
     for k, v in MODEL_COLORS.items():
         if k.lower() in model.lower():
             return v
-    return list(C.values())[hash(model) % len(C)]
+    import hashlib
+    idx = int(hashlib.md5(model.encode()).hexdigest(), 16) % len(C)
+    return list(C.values())[idx]
 
 
 # Always resolve paths relative to the project root (one level above this file)
@@ -68,10 +71,14 @@ def load_results(results_dir=None):
     if results_dir is None:
         results_dir = _RESULTS_DIR
     files = [f for f in glob.glob(os.path.join(results_dir, "*.json"))
-             if not os.path.basename(f).startswith("loss_")]
+             if not os.path.basename(f).startswith("loss_") and not f.endswith("_info.json")]
     if not files:
         return pd.DataFrame()
-    df = pd.DataFrame([json.load(open(f)) for f in files])
+    records = []
+    for f in files:
+        with open(f) as fp:
+            records.append(json.load(fp))
+    df = pd.DataFrame(records)
     df["phase"] = df["phase"].astype(str)
     return df
 
@@ -84,7 +91,8 @@ def load_loss_curves(results_dir=None):
         name  = os.path.basename(f).replace("loss_", "").replace(".json", "")
         parts = name.rsplit("_", 1)
         model, phase = (parts[0], parts[1]) if len(parts) == 2 else (name, "?")
-        curves.setdefault(model, {})[phase] = json.load(open(f))
+        with open(f) as fp:
+            curves.setdefault(model, {})[phase] = json.load(fp)
     return curves
 
 
@@ -116,6 +124,7 @@ def mbadge(label, value, color):
 
 def run(results_dir=None):
     df     = load_results(results_dir)
+    df     = df.dropna(subset=["model"])
     curves = load_loss_curves(results_dir)
 
     if df.empty:
@@ -263,7 +272,7 @@ def run(results_dir=None):
 
         # ── OVERVIEW ─────────────────────────────────────────────
         if tab == "overview":
-            best_roc = data.loc[data["roc_auc"].idxmax()] if not data.empty else None
+            best_roc = data.loc[data["roc_auc"].idxmax()] if not data.empty and data["roc_auc"].notna().any() else None
             avg_roc  = data["roc_auc"].mean() if not data.empty else 0
 
             stats = html.Div([
@@ -424,23 +433,39 @@ def run(results_dir=None):
                 for phase, losses in sorted(curves[model_name].items()):
                     if phase not in ap:
                         continue
+                    # Handle both old format (list of floats) and new format (list of dicts)
+                    if losses and isinstance(losses[0], dict):
+                        train_losses = [entry["train_loss"] for entry in losses]
+                        val_losses = [entry["val_loss"] for entry in losses]
+                    else:
+                        train_losses = losses
+                        val_losses = None
+                    epochs = list(range(1, len(train_losses) + 1))
                     fig.add_trace(go.Scatter(
-                        x=list(range(1, len(losses) + 1)), y=losses,
-                        mode="lines+markers", name=f"Phase {phase}",
+                        x=epochs, y=train_losses,
+                        mode="lines+markers", name=f"Phase {phase} (train)",
                         line=dict(color=PHASE_COLORS.get(phase, C["purple"]), width=2),
                         marker=dict(size=4),
-                        hovertemplate=f"Phase {phase}<br>Epoch %{{x}}<br>Loss %{{y:.4f}}<extra></extra>",
+                        hovertemplate=f"Phase {phase} train<br>Epoch %{{x}}<br>Loss %{{y:.4f}}<extra></extra>",
                     ))
-                    drop = losses[0] - losses[-1]
-                    pct  = drop / losses[0] * 100
+                    if val_losses is not None:
+                        fig.add_trace(go.Scatter(
+                            x=epochs, y=val_losses,
+                            mode="lines+markers", name=f"Phase {phase} (val)",
+                            line=dict(color=PHASE_COLORS.get(phase, C["purple"]), width=2, dash="dash"),
+                            marker=dict(size=3),
+                            hovertemplate=f"Phase {phase} val<br>Epoch %{{x}}<br>Loss %{{y:.4f}}<extra></extra>",
+                        ))
+                    drop = train_losses[0] - train_losses[-1]
+                    pct  = drop / train_losses[0] * 100
                     conv_rows.append(html.Tr([
                         html.Td(html.Span(model_name, style={"color": get_model_color(model_name), "fontWeight": "700"}),
                                 style={"padding": "6px 10px", "fontSize": "11px"}),
                         html.Td(f"Phase {phase}", style={"padding": "6px 10px",
                                                           "color": PHASE_COLORS.get(phase, TEXT),
                                                           "fontSize": "11px"}),
-                        html.Td(f"{losses[0]:.4f}", style={"padding": "6px 10px", "color": TEXT, "fontSize": "11px"}),
-                        html.Td(f"{losses[-1]:.4f}", style={"padding": "6px 10px", "color": TEXT, "fontSize": "11px"}),
+                        html.Td(f"{train_losses[0]:.4f}", style={"padding": "6px 10px", "color": TEXT, "fontSize": "11px"}),
+                        html.Td(f"{train_losses[-1]:.4f}", style={"padding": "6px 10px", "color": TEXT, "fontSize": "11px"}),
                         html.Td(f"{pct:.1f}%",
                                 style={"padding": "6px 10px", "fontSize": "11px",
                                        "color": C["green"] if pct > 5 else C["yellow"],
@@ -489,7 +514,8 @@ def run(results_dir=None):
                     if r.empty or not isinstance(r.iloc[0].get("y_pred"), list):
                         continue
                     cm_v = confusion_matrix(np.array(r.iloc[0]["y_test"]),
-                                            np.array(r.iloc[0]["y_pred"]))
+                                            np.array(r.iloc[0]["y_pred"]),
+                                            labels=[0, 1])
                     fns.append(cm_v.ravel()[2])  # FN
                     xs.append(f"Phase {p}")
                 if fns:
@@ -514,7 +540,8 @@ def run(results_dir=None):
                         if r.empty or not isinstance(r.iloc[0].get("y_pred"), list):
                             continue
                         cm_v = confusion_matrix(np.array(r.iloc[0]["y_test"]),
-                                                np.array(r.iloc[0]["y_pred"]))
+                                                np.array(r.iloc[0]["y_pred"]),
+                                                labels=[0, 1])
                         pct  = cm_v / cm_v.sum() * 100
                         text = [[f"{cm_v[a][b]}<br>{pct[a][b]:.1f}%"
                                  for b in range(2)] for a in range(2)]
@@ -649,7 +676,7 @@ def run(results_dir=None):
 
         return html.P("Select a tab.", style={"color": MUTED})
 
-    print("\n  Dashboard → http://127.0.0.1:8050\n")
+    print("\n  Dashboard -> http://127.0.0.1:8050\n")
     app.run(debug=False, use_reloader=False)
 
 

@@ -1,33 +1,17 @@
-# TrialBench
+# ── Data ──────────────────────────────────────────────────────────
+numpy>=1.24,<2.0
+pandas>=2.0,<3.0
+scikit-learn>=1.3,<2.0
+
+# ── Deep Learning ─────────────────────────────────────────────────
+torch>=2.0,<3.0
+
+# ── Evaluation & Dashboards ───────────────────────────────────────
+plotly>=5.0,<6.0
+dash>=2.0,<3.0
+
+# ── Gradient Boosting ─────────────────────────────────────────────
+xgboost>=2.0,<3.0
+
+# ── Dataset ───────────────────────────────────────────────────────
 trialbench
-
-# Data
-numpy
-pandas
-scikit-learn
-
-# Deep learning
-torch
-torchvision
-
-# Traditional ML
-xgboost
-
-# Graph neural networks
-torch-geometric
-
-# NLP / Bio-BERT
-transformers
-sentencepiece
-
-# Evaluation & plotting
-matplotlib
-seaborn
-
-# Notebooks
-jupyter
-ipykernel
-
-# Utilities
-tqdm
-pyyaml
