@@ -476,7 +476,7 @@ def nested_cv_single_model(
 
         # Enrich with CV metadata
         metrics["threshold"] = round(threshold, 4)
-        metrics["n_inner_samples"] = int(len(all_y_true)) if all_y_prob is not None else 0
+        metrics["n_inner_samples"] = int(len(all_y_true)) if len(all_y_true) > 0 else 0
         metrics["fold"] = outer_idx
         metrics["n_outer_folds"] = outer_folds
         metrics["n_inner_folds"] = inner_folds

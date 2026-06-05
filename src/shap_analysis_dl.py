@@ -43,45 +43,33 @@ from src.utils import set_seed
 set_seed(42)
 
 PHASES = ["1", "2", "3", "4"]
-DL_MODELS = ["MLP", "CNN", "RNN", "FT_Transformer", "TabNet"]
+DL_MODELS = ["MLP", "CNN", "RNN", "FT_Transformer"]
 
 
 def _load_dl_model(model_name, phase, use_text=False):
     """
     Reconstruct model architecture, load checkpoint, and return model + data.
     """
-    from models.cnn import CNNModel
-    from models.mlp import MLPModel
-    from models.rnn import RNNModel
-    from models.ft_transformer import FTTransformerModel
-    from models.tabnet_model import TabNetModel
+    from models.cnn import CNN
+    from models.mlp import MLP
+    from models.rnn import RNN
+    from models.ft_transformer import FTTransformer
 
     # Load data to get input_dim
-    X_train, X_test, y_train, y_test, feature_names = load_phase(
+    X_train, X_test, y_train, y_test, pos_weight = load_phase(
         phase, for_tree=False, use_text=use_text, verbose=False
     )
     input_dim = X_train.shape[1]
-    n_classes = 2
 
-    # Reconstruct model
+    # Reconstruct model with correct class names and signatures
     if model_name == "MLP":
-        model = MLPModel(input_dim=input_dim, hidden_dims=[128, 64], dropout=0.3)
+        model = MLP(input_dim=input_dim)
     elif model_name == "CNN":
-        model = CNNModel(input_dim=input_dim, num_classes=n_classes, dropout=0.3)
+        model = CNN(input_dim=input_dim)
     elif model_name == "RNN":
-        # RNN expects (batch, seq_len=1, features)
-        model = RNNModel(input_size=input_dim, hidden_size=64, num_classes=n_classes, dropout=0.3)
+        model = RNN(input_dim=input_dim)
     elif model_name == "FT_Transformer":
-        model = FTTransformerModel(
-            num_features=input_dim,
-            num_classes=n_classes,
-            dim=64,
-            depth=3,
-            heads=4,
-            dropout=0.1,
-        )
-    elif model_name == "TabNet":
-        model = TabNetModel(input_dim=input_dim, num_classes=n_classes)
+        model = FTTransformer(input_dim=input_dim)
     else:
         raise ValueError(f"Unknown DL model: {model_name}")
 
@@ -227,7 +215,7 @@ def main(models, phases, use_text=False, max_display=20):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SHAP analysis for trained DL models")
     parser.add_argument("--model", nargs="+", required=True,
-                        help='Model name(s): MLP, CNN, RNN, FT_Transformer, TabNet, or "all"')
+                        help='Model name(s): MLP, CNN, RNN, FT_Transformer, or "all"')
     parser.add_argument("--phase", nargs="+", required=True,
                         help='Phase(s): 1, 2, 3, 4 or "all"')
     parser.add_argument("--use-text", action="store_true",

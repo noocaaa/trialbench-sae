@@ -22,37 +22,9 @@ DEVICE = torch.device(
 
 print(f"Using device: {DEVICE}")
 
-class AsymmetricBCEWithLogitsLoss(nn.Module):
-    """
-    BCE loss with asymmetric penalty for medical false negatives.
-
-    In SAE prediction, a False Negative (missed adverse event) is far more
-    dangerous than a False Positive (unnecessary caution). This loss applies
-    FN_PENALTY and FP_PENALTY as multipliers on a per-sample basis.
-    """
-    def __init__(self, pos_weight=None, fn_penalty=None, fp_penalty=None):
-        super().__init__()
-        self.fn_penalty = fn_penalty if fn_penalty is not None else config.FN_PENALTY
-        self.fp_penalty = fp_penalty if fp_penalty is not None else config.FP_PENALTY
-        self.pos_weight = pos_weight
-
-    def forward(self, logits, targets):
-        # Base BCE loss per sample (no reduction)
-        bce = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets,
-            pos_weight=self.pos_weight,
-            reduction="none",
-        )
-
-        # Identify error types using logits (logit < 0 → sigmoid < 0.5)
-        fn_mask = (targets == 1) & (logits < 0)   # FN: should be 1, predicted 0
-        fp_mask = (targets == 0) & (logits >= 0)  # FP: should be 0, predicted 1
-
-        weights = torch.ones_like(bce)
-        weights = torch.where(fn_mask, self.fn_penalty, weights)
-        weights = torch.where(fp_mask, self.fp_penalty, weights)
-
-        return (bce * weights).mean()
+# NOTE: We use standard BCEWithLogitsLoss for consistency with the paper.
+# The pos_weight parameter handles class imbalance, which is sufficient
+# for this medical prediction task.
 
 
 def train_model(
@@ -169,8 +141,8 @@ def train_model(
     else:
         raise ValueError(f"Unknown optimizer in config: {config.OPTIMIZER}")
 
-    # ── Loss function (asymmetric for medical safety) ───────────
-    criterion = AsymmetricBCEWithLogitsLoss(
+    # ── Loss function ───────────────────────────────────────────
+    criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
     )
 
