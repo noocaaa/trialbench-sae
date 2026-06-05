@@ -56,3 +56,4 @@ mlflow.db
 mlflow.db.*
 mlartifacts/
 mlruns/apps.zip
+mlruns/
