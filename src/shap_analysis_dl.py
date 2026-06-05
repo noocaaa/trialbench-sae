@@ -136,7 +136,7 @@ def run_shap_dl(model_name, phase, use_text=False, max_display=20, n_background=
 
     result = _load_dl_model(model_name, phase, use_text=use_text)
     if result[0] is None:
-        print(f"  [SKIP] Checkpoint not found: models/checkpoints/{model_name}_{phase}_best.pt")
+        print(f"  [SKIP] Checkpoint not found: {ckpt_path}")
         return False
 
     model, X_train, X_test, y_train, y_test = result
@@ -160,6 +160,13 @@ def run_shap_dl(model_name, phase, use_text=False, max_display=20, n_background=
         expected_value = explainer.expected_value[1] if isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value
     else:
         expected_value = explainer.expected_value
+
+    # ── Guard: feature name count must match SHAP values ──────────
+    if len(feature_names) != shap_values.shape[1]:
+        print(f"  [WARNING] Feature name count ({len(feature_names)}) "
+              f"!= SHAP values shape ({shap_values.shape[1]}). "
+              f"Falling back to generic names.")
+        feature_names = [f"feat_{i}" for i in range(shap_values.shape[1])]
 
     # ── Build Explanation ─────────────────────────────────────────
     explanation = shap.Explanation(

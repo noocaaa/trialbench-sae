@@ -165,6 +165,13 @@ def run_shap(model_name, phase, use_text=False, max_display=20, n_background=100
         else:
             expected_value = explainer.expected_value
 
+    # ── Guard: feature name count must match SHAP values ──────────
+    if len(feature_names) != shap_values.shape[1]:
+        print(f"  [WARNING] Feature name count ({len(feature_names)}) "
+              f"!= SHAP values shape ({shap_values.shape[1]}). "
+              f"Falling back to generic names.")
+        feature_names = [f"feat_{i}" for i in range(shap_values.shape[1])]
+
     # ── Build Explanation object for plotting ─────────────────────
     explanation = shap.Explanation(
         values=shap_values,
