@@ -298,14 +298,22 @@ def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=Fal
             print("\n  [WARNING] --shap requires --nested. Skipping SHAP analysis.")
         else:
             print(f"\n{'='*60}\n  SHAP ANALYSIS\n{'='*60}")
-            # Sklearn models
-            sklearn_models = [m for m in models if m in NESTED_MODELS and m not in ("mlp", "cnn", "rnn", "transformer", "ft_transformer")]
+            # Sklearn models (pass display names, not registry keys)
+            sklearn_models = [
+                NESTED_MODELS[m][2]
+                for m in models
+                if m in NESTED_MODELS and not NESTED_MODELS[m][1]
+            ]
             if sklearn_models:
                 print("\n>> Running SHAP for sklearn models...")
                 from src.shap_analysis import main as shap_main
                 shap_main(sklearn_models, phases, use_text=use_text)
-            # DL models
-            dl_models = [m for m in models if m in ("mlp", "cnn", "rnn", "transformer", "ft_transformer")]
+            # DL models (pass display names, not registry keys)
+            dl_models = [
+                NESTED_MODELS[m][2]
+                for m in models
+                if m in NESTED_MODELS and NESTED_MODELS[m][1]
+            ]
             if dl_models:
                 print("\n>> Running SHAP for DL models...")
                 from src.shap_analysis_dl import main as shap_dl_main
@@ -324,7 +332,7 @@ if __name__ == "__main__":
         "--models", nargs="+",
         choices=list(SIMPLE_MODELS.keys()),
         default=list(SIMPLE_MODELS.keys()),
-        help="Models to run (default: all 9 models)"
+        help="Models to run (default: all 11 models)"
     )
     parser.add_argument(
         "--phases", nargs="+",
