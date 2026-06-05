@@ -37,13 +37,57 @@ except ImportError:
 
 import torch
 import torch.nn as nn
-from src.data_loader import load_phase
+from src.data_loader import load_phase, TEXT_COLS, ZERO_VARIANCE_COLS, NULL_THRESHOLD, _DEFAULT_DATA
 from src.utils import set_seed
+import pandas as pd
 
 set_seed(42)
 
 PHASES = ["1", "2", "3", "4"]
 DL_MODELS = ["MLP", "CNN", "RNN", "FT_Transformer"]
+
+
+def _get_real_feature_names(phase, for_tree=False, use_text=False, text_max_features=100):
+    """
+    Replicate preprocessing from data_loader._preprocess to get actual feature names.
+    Returns list of feature names after all preprocessing steps.
+    """
+    base = f"{_DEFAULT_DATA}/Phase{phase}"
+    X_train_raw = pd.read_csv(f"{base}/train_x.csv")
+
+    # Step 1: drop ID and text columns
+    drop_cols = ["Unnamed: 0"] + [c for c in TEXT_COLS if c in X_train_raw.columns]
+    X = X_train_raw.drop(columns=drop_cols, errors="ignore")
+
+    # Step 2: drop zero-variance columns
+    zero_var = [c for c in ZERO_VARIANCE_COLS if c in X.columns]
+    X = X.drop(columns=zero_var, errors="ignore")
+
+    # Step 3: drop high-null columns
+    null_rates = X.isnull().mean()
+    high_null = null_rates[null_rates > NULL_THRESHOLD].index.tolist()
+    X = X.drop(columns=high_null, errors="ignore")
+
+    # Step 4: encode categorical columns
+    cat_cols = X.select_dtypes(include="object").columns.tolist()
+    if cat_cols:
+        if for_tree:
+            pass
+        else:
+            X = pd.get_dummies(X, columns=cat_cols, dummy_na=False)
+
+    feature_names = list(X.columns)
+
+    if use_text:
+        from src.text_features import extract_text_features
+        X_test_raw = pd.read_csv(f"{base}/test_x.csv")
+        _, X_text = extract_text_features(
+            X_train_raw, X_test_raw, phase=phase, verbose=False, max_features=text_max_features
+        )
+        if X_text is not None and X_text.shape[1] > 0:
+            feature_names += [f"tfidf_{i}" for i in range(X_text.shape[1])]
+
+    return feature_names
 
 
 def _load_dl_model(model_name, phase, use_text=False):
@@ -75,12 +119,12 @@ def _load_dl_model(model_name, phase, use_text=False):
 
     # Load checkpoint
     clean_name = model_name.replace(" ", "_")
-    ckpt_path = f"models/checkpoints/{clean_name}_{phase}_best.pt"
+    ckpt_path = f"models/checkpoints/{clean_name}_{phase}.pt"
     if not os.path.exists(ckpt_path):
         return None, None, None, None, None
 
     state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    model.load_state_dict(state["model_state_dict"])
+    model.load_state_dict(state)
     model.eval()
 
     return model, X_train, X_test, y_train, y_test
@@ -96,8 +140,7 @@ def run_shap_dl(model_name, phase, use_text=False, max_display=20, n_background=
         return False
 
     model, X_train, X_test, y_train, y_test = result
-    n_features = X_test.shape[1]
-    feature_names = [f"feat_{i}" for i in range(n_features)]
+    feature_names = _get_real_feature_names(phase, for_tree=False, use_text=use_text)
 
     # Convert to torch tensors
     X_test_t = torch.FloatTensor(X_test)

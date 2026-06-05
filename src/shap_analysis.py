@@ -44,7 +44,8 @@ except ImportError:
     print("[ERROR] joblib not installed. Run: pip install joblib")
     sys.exit(1)
 
-from src.data_loader import load_phase
+from src.data_loader import load_phase, TEXT_COLS, ZERO_VARIANCE_COLS, NULL_THRESHOLD, _DEFAULT_DATA
+import pandas as pd
 
 
 PHASES = ["1", "2", "3", "4"]
@@ -53,15 +54,51 @@ PHASES = ["1", "2", "3", "4"]
 TREE_MODELS = {"XGBoost", "RandomForest", "LightGBM", "XGBoost+Text", "RandomForest+Text", "LightGBM+Text"}
 
 
-def _get_feature_names(n_features, use_text=False, text_prefix="text_tfidf"):
+def _get_real_feature_names(phase, for_tree=False, use_text=False, text_max_features=100):
     """
-    Build generic feature names.
-    Tabular: feat_0, feat_1, ...
-    Text:    text_tfidf_0, text_tfidf_1, ...
+    Replicate preprocessing from data_loader._preprocess to get actual feature names.
+    Returns list of feature names after all preprocessing steps.
     """
-    # Without knowing exact split, we use generic names
-    # SHAP will still rank them correctly
-    return [f"feat_{i}" for i in range(n_features)]
+    base = f"{_DEFAULT_DATA}/Phase{phase}"
+    X_train_raw = pd.read_csv(f"{base}/train_x.csv")
+
+    # Step 1: drop ID and text columns
+    drop_cols = ["Unnamed: 0"] + [c for c in TEXT_COLS if c in X_train_raw.columns]
+    X = X_train_raw.drop(columns=drop_cols, errors="ignore")
+
+    # Step 2: drop zero-variance columns
+    zero_var = [c for c in ZERO_VARIANCE_COLS if c in X.columns]
+    X = X.drop(columns=zero_var, errors="ignore")
+
+    # Step 3: drop high-null columns
+    null_rates = X.isnull().mean()
+    high_null = null_rates[null_rates > NULL_THRESHOLD].index.tolist()
+    X = X.drop(columns=high_null, errors="ignore")
+
+    # Step 4: encode categorical columns
+    cat_cols = X.select_dtypes(include="object").columns.tolist()
+    if cat_cols:
+        if for_tree:
+            # Ordinal encoding keeps same column names
+            pass
+        else:
+            # One-hot encoding expands columns
+            X = pd.get_dummies(X, columns=cat_cols, dummy_na=False)
+
+    # Capture feature names before imputer/scaler (they don't change names)
+    feature_names = list(X.columns)
+
+    # Add text feature names if applicable
+    if use_text:
+        from src.text_features import extract_text_features
+        X_test_raw = pd.read_csv(f"{base}/test_x.csv")
+        _, X_text = extract_text_features(
+            X_train_raw, X_test_raw, phase=phase, verbose=False, max_features=text_max_features
+        )
+        if X_text is not None and X_text.shape[1] > 0:
+            feature_names += [f"tfidf_{i}" for i in range(X_text.shape[1])]
+
+    return feature_names
 
 
 def run_shap(model_name, phase, use_text=False, max_display=20, n_background=100):
@@ -96,8 +133,7 @@ def run_shap(model_name, phase, use_text=False, max_display=20, n_background=100
         phase, for_tree=is_tree, use_text=use_text, verbose=False
     )
 
-    n_features = X_test.shape[1]
-    feature_names = _get_feature_names(n_features, use_text=use_text)
+    feature_names = _get_real_feature_names(phase, for_tree=is_tree, use_text=use_text)
 
     # ── Create SHAP explainer ─────────────────────────────────────
     # Tree models → TreeExplainer (fast, exact)
