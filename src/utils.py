@@ -1,9 +1,26 @@
 import os
 import json
 import glob
+import random
 import numpy as np
 import pandas as pd
 from sklearn.metrics import f1_score
+
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+
+
+def set_seed(seed=42):
+    """Set random seeds for reproducibility across numpy, random, and torch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    if _TORCH_AVAILABLE:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
 
 def find_best_threshold(y_true, y_prob, criterion="f1"):

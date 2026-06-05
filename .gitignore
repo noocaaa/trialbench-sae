@@ -50,3 +50,9 @@ Thumbs.db
 logs/
 *.log
 wandb/
+
+# MLflow
+mlflow.db
+mlflow.db.*
+mlartifacts/
+mlruns/

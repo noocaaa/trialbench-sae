@@ -3,7 +3,7 @@ import random
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
 from sklearn.impute import SimpleImputer
 
 # ── Text columns — dropped because models can't process raw text ──
@@ -51,7 +51,7 @@ def set_seed(seed=SEED):
     torch.backends.cudnn.benchmark     = False
 
 
-def load_phase(phase, data_dir=None, verbose=False, for_tree=False):
+def load_phase(phase, data_dir=None, verbose=False, for_tree=False, use_text=False, text_max_features=100):
     """
     Load train/test splits for a given phase.
 
@@ -61,6 +61,8 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False):
     data_dir : str  — path to dataset root. If None uses data/ in project root.
     verbose  : bool — if True prints feature selection summary
     for_tree : bool — if True, use OrdinalEncoder + no scaling for tree-based models
+    use_text : bool — if True, append TF-IDF features from text columns
+    text_max_features : int — max TF-IDF features per text column (default: 100)
 
     Returns
     -------
@@ -88,9 +90,9 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False):
         if not os.path.isfile(p):
             raise FileNotFoundError(f"Required file not found: {p}")
 
-    X_train = pd.read_csv(train_x_path)
+    X_train_raw = pd.read_csv(train_x_path)
     y_train = pd.read_csv(train_y_path)
-    X_test  = pd.read_csv(test_x_path)
+    X_test_raw  = pd.read_csv(test_x_path)
     y_test  = pd.read_csv(test_y_path)
 
     y_train = y_train["Y/N"].values.astype(int)
@@ -102,9 +104,26 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False):
     if len(set(np.unique(y_train)) - {0, 1}) > 0:
         raise ValueError("y_train contains non-binary values (must be 0 or 1)")
 
+    # ── Extract text features BEFORE preprocessing drops text columns ──
+    if use_text:
+        from src.text_features import extract_text_features
+        X_train_text, X_test_text = extract_text_features(
+            X_train_raw, X_test_raw, phase=phase, verbose=verbose, max_features=text_max_features
+        )
+    else:
+        X_train_text = X_test_text = None
+
+    # ── Preprocess tabular features ──
     X_train, X_test = _preprocess(
-        X_train, X_test, phase=phase, verbose=verbose, for_tree=for_tree
+        X_train_raw, X_test_raw, phase=phase, verbose=verbose, for_tree=for_tree
     )
+
+    # ── Concatenate text features if requested ──
+    if use_text and X_train_text is not None and X_train_text.shape[1] > 0:
+        X_train = np.hstack([X_train, X_train_text])
+        X_test = np.hstack([X_test, X_test_text])
+        if verbose:
+            print(f"    Combined features : tabular+text = {X_train.shape[1]}")
 
     if X_train.shape[0] != y_train.shape[0]:
         raise ValueError(f"X_train/y_train shape mismatch: {X_train.shape[0]} vs {y_train.shape[0]}")
@@ -146,7 +165,6 @@ def _preprocess(X_train, X_test, phase="?", verbose=False, for_tree=False):
     if cat_cols:
         if for_tree:
             # Tree models: ordinal encoding (no dummies, no scaling later)
-            from sklearn.preprocessing import OrdinalEncoder
             for col in cat_cols:
                 fill_val = X_train[col].mode().iloc[0] if not X_train[col].mode().empty else "missing"
                 X_train[col] = X_train[col].fillna(fill_val)

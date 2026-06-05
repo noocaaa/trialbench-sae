@@ -19,6 +19,14 @@ from sklearn.metrics import confusion_matrix
 from src.data_loader import load_phase
 from src.evaluate import evaluate
 from src.utils import load_results as _load_results_utils
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    _PLOTLY_AVAILABLE = True
+except ImportError:
+    go = None
+    make_subplots = None
+    _PLOTLY_AVAILABLE = False
 
 PHASES  = ["1", "2", "3", "4"]
 RESULTS = "results"
@@ -199,9 +207,7 @@ def check_confusion_matrices():
     os.makedirs(RESULTS, exist_ok=True)
 
     try:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-
+        # plotly already imported at top of file
         # Group by model
         models = {}
         for f in files:
@@ -269,10 +275,12 @@ def check_loss_curves():
         print("  No loss curves saved yet - run your models first.")
         return
 
-    try:
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
+    if not _PLOTLY_AVAILABLE:
+        print("  Plotly not installed — skipping loss curve plots.")
+        print("  Install with: pip install plotly")
+        return
 
+    try:
         models_found = {}
         for f in sorted(files):
             name  = os.path.basename(f).replace("loss_", "").replace(".json", "")

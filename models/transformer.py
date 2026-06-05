@@ -12,8 +12,13 @@ class Transformer(nn.Module):
     Each feature becomes its own token (like a word in a sentence).
     A learnable [CLS] token aggregates information via self-attention.
     """
-    def __init__(self, input_dim, embed_dim=64, num_heads=4, num_layers=2):
+    def __init__(self, input_dim, embed_dim=None, num_heads=None, num_layers=None):
         super().__init__()
+        # Tunable architecture parameters with defaults
+        embed_dim = embed_dim or 64
+        num_heads = num_heads or 4
+        num_layers = num_layers or 2
+
         # Project each scalar feature independently into embed_dim
         self.input_proj = nn.Linear(1, embed_dim)
 
@@ -51,8 +56,9 @@ class Transformer(nn.Module):
         return self.fc(cls_out).squeeze(1)
 
 
-def run(phase, **kwargs):
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase)
-    train_model(Transformer(X_train.shape[1]).to(DEVICE),
+def run(phase, use_text=False, **kwargs):
+    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, use_text=use_text)
+    model_name = "Transformer+Text" if use_text else "Transformer"
+    train_model(Transformer(X_train.shape[1], **kwargs).to(DEVICE),
                 X_train, X_test, y_train, y_test,
-                pos_weight, model_name="Transformer", phase=phase, **kwargs)
+                pos_weight, model_name=model_name, phase=phase, **kwargs)

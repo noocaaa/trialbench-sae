@@ -134,7 +134,7 @@ All deep learning models use the **same hyperparameters** for fair comparison:
 | `WEIGHT_DECAY` | 1e-4 | Regularization |
 | `SCHEDULER` | CosineAnnealingLR | Smooth lr decay for better convergence |
 | `GRAD_CLIP` | 1.0 | Prevents exploding gradients (critical for Transformer) |
-| `VAL_SPLIT` | 0.15 | 15% of training data held out for validation |
+| `VAL_SPLIT` | 0.125 | 12.5% of training data held out for validation |
 | `PATIENCE` | 5 | Early stopping: stop if val loss does not improve for 5 epochs |
 | `TUNE_THRESHOLD` | True | Find optimal decision threshold on validation set |
 

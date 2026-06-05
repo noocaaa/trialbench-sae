@@ -6,47 +6,22 @@ import json
 import glob
 import pandas as pd
 
-SPECIAL_CASES = {
-    "logistic_regression": "LogisticRegression",
-    "random_forest": "RandomForest",
-    "xgboost": "XGBoost",
-    "svm": "SVM",
-    "knn": "KNN",
-    "mlp": "MLP",
-    "cnn": "CNN",
-    "rnn": "RNN",
-    "transformer": "Transformer",
-    "lightgbm": "LightGBM",
-    "ft_transformer": "FT-Transformer",
-}
+from src.mlflow_tracker import tracker
+
 
 def load_fold_results(results_dir="results"):
-    """Load all fold result files (e.g., rf_1_fold0.json)."""
+    """Load all fold result files (e.g., MLP_1_fold0.json)."""
     files = glob.glob(os.path.join(results_dir, "*_fold*.json"))
     records = []
     for f in files:
-        basename = os.path.basename(f).replace(".json", "")
-        # Parse: model_phase_foldN
-        parts = basename.rsplit("_fold", 1)
-        if len(parts) != 2:
-            continue
-        prefix, fold_str = parts
-        fold = int(fold_str)
-
-        # Parse model and phase from prefix
-        # e.g., "random_forest_1" -> model="random_forest", phase="1"
-        # e.g., "logistic_regression_1" -> model="logistic_regression", phase="1"
-        prefix_parts = prefix.rsplit("_", 1)
-        if len(prefix_parts) != 2:
-            continue
-        model_raw, phase = prefix_parts
-
         with open(f) as fp:
             data = json.load(fp)
-
-        data["model"] = SPECIAL_CASES.get(model_raw, model_raw.replace("_", " ").title())
-        data["phase"] = phase
-        data["fold"] = fold
+        
+        # The JSON already contains model name and phase from evaluate()
+        # Just ensure fold is an integer
+        if "fold" in data:
+            data["fold"] = int(data["fold"])
+        
         records.append(data)
 
     return pd.DataFrame(records)
@@ -110,6 +85,13 @@ def aggregate_and_print(results_dir="results"):
         phase_df = df[df["phase"] == phase]
         best = phase_df.loc[phase_df["roc_auc_mean"].idxmax()]
         print(f"  Phase {phase}: {best['model']} - ROC-AUC: {best['roc_auc']}")
+
+    # ── Log to MLflow ──
+    if tracker.enabled and tracker.get_run_id() is not None:
+        tracker.log_aggregated_results(df.to_dict(orient="records"))
+        tracker.log_artifact("results/aggregated_results.json")
+
+    return df
 
 
 if __name__ == "__main__":

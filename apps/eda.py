@@ -1,6 +1,6 @@
 """
-notebooks/eda.py — Exploratory Data Analysis for SAE Prediction
-Run with: python notebooks/eda.py
+apps/eda.py — Exploratory Data Analysis for SAE Prediction
+Run with: python apps/eda.py
 Opens an interactive Dash dashboard in your browser.
 
 Tabs:
@@ -12,7 +12,6 @@ Tabs:
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots

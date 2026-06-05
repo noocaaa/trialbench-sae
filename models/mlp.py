@@ -9,21 +9,23 @@ class MLP(nn.Module):
     Multi-Layer Perceptron for tabular SAE prediction.
     No structural assumptions — learns any non-linear combination of features.
     """
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, hidden_dim=256, dropout=None):
         super().__init__()
+        dropout = dropout if dropout is not None else config.DROPOUT
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 256), nn.BatchNorm1d(256), nn.ReLU(), nn.Dropout(config.DROPOUT),
-            nn.Linear(256, 128), nn.BatchNorm1d(128), nn.ReLU(), nn.Dropout(config.DROPOUT),
-            nn.Linear(128, 64), nn.BatchNorm1d(64),  nn.ReLU(), nn.Dropout(config.DROPOUT),
-            nn.Linear(64, 1),
+            nn.Linear(input_dim, hidden_dim), nn.BatchNorm1d(hidden_dim), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2), nn.BatchNorm1d(hidden_dim // 2), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4), nn.BatchNorm1d(hidden_dim // 4), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 4, 1),
         )
 
     def forward(self, x):
         return self.net(x).squeeze(1)
 
 
-def run(phase, **kwargs):
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase)
-    train_model(MLP(X_train.shape[1]).to(DEVICE),
+def run(phase, use_text=False, **kwargs):
+    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, use_text=use_text)
+    model_name = "MLP+Text" if use_text else "MLP"
+    train_model(MLP(X_train.shape[1], **kwargs).to(DEVICE),
                 X_train, X_test, y_train, y_test,
-                pos_weight, model_name="MLP", phase=phase, **kwargs)
+                pos_weight, model_name=model_name, phase=phase, **kwargs)

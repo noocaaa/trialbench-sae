@@ -1,9 +1,9 @@
 """
 src/cv_preprocessing.py — Leakage-free preprocessing for cross-validation.
 
-All statistics (null rates, imputer, scaler, encoders) are fit on the training
-fold only and applied to both train and test. This prevents data leakage from
-the test fold into the training pipeline.
+All statistics (null rates, imputer, scaler, encoders, TF-IDF) are fit on the
+training fold only and applied to both train and test. This prevents data
+leakage from the test fold into the training pipeline.
 """
 import numpy as np
 import pandas as pd
@@ -13,7 +13,7 @@ from sklearn.impute import SimpleImputer
 from src.data_loader import TEXT_COLS, ZERO_VARIANCE_COLS, NULL_THRESHOLD
 
 
-def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False):
+def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False, use_text=False):
     """
     Preprocess train/test splits for cross-validation with NO data leakage.
 
@@ -26,6 +26,7 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False):
     phase    : str  — phase label for verbose output
     for_tree : bool — if True, use OrdinalEncoder + no standardization
     verbose  : bool — if True, print feature selection summary
+    use_text : bool — if True, append TF-IDF features from text columns
 
     Returns
     -------
@@ -35,6 +36,14 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False):
     X_tr = X_train.copy()
     X_te = X_test.copy()
     n_original = len(X_tr.columns)
+
+    # ── Extract text features BEFORE dropping text columns ──────────
+    X_train_text = X_test_text = None
+    if use_text:
+        from src.text_features import extract_text_features
+        X_train_text, X_test_text = extract_text_features(
+            X_tr, X_te, phase=phase, verbose=verbose
+        )
 
     # ── Step 1: drop ID column and text columns ───────────────────
     drop_cols = ["Unnamed: 0"] + [c for c in TEXT_COLS if c in X_tr.columns]
@@ -92,10 +101,17 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False):
         X_tr = scaler.fit_transform(X_tr)
         X_te = scaler.transform(X_te)
 
+    # ── Step 7: concatenate text features if requested ─────────────
+    if use_text and X_train_text is not None and X_train_text.shape[1] > 0:
+        X_tr = np.hstack([X_tr, X_train_text])
+        X_te = np.hstack([X_te, X_test_text])
+
     # ── Summary ───────────────────────────────────────────────────
     if verbose:
         print(f"\n  Phase {phase} - CV feature selection summary:")
-        print(f"    Original columns     : {n_original}")
+        print(
+            f"    Original columns     : {n_original}"
+        )
         print(
             f"    After dropping text  : {n_after_text}  "
             f"(-{n_original - n_after_text} text cols)"
@@ -108,7 +124,14 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False):
             f"    After high nulls     : {n_after_null}  "
             f"(-{n_after_zero - n_after_null} cols >{NULL_THRESHOLD*100:.0f}% null)"
         )
-        print(f"    Final feature count  : {n_after_null}")
+        final_count = X_tr.shape[1]
+        if use_text and X_train_text is not None:
+            tab_count = final_count - X_train_text.shape[1]
+            print(f"    Tabular features     : {tab_count}")
+            print(f"    Text features        : {X_train_text.shape[1]}")
+            print(f"    Final feature count  : {final_count}")
+        else:
+            print(f"    Final feature count  : {final_count}")
         if high_null:
             print(f"    Dropped (high null)  : {high_null}")
 

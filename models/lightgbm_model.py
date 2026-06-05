@@ -3,9 +3,9 @@ from src.data_loader import load_phase
 from src.train_sklearn import train_sklearn_model
 
 
-def run(phase, **kwargs):
+def run(phase, use_text=False, **kwargs):
     # Tree models use ordinal encoding + no standardization
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, for_tree=True)
+    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, for_tree=True, use_text=use_text)
 
     n_estimators = kwargs.get('n_estimators', 100)
     max_depth = kwargs.get('max_depth', -1)
@@ -27,7 +27,8 @@ def run(phase, **kwargs):
         verbose=-1,
     )
 
+    model_name = "LightGBM+Text" if use_text else "LightGBM"
     train_sklearn_model(model,
                         X_train, X_test, y_train, y_test,
-                        model_name="LightGBM", phase=phase,
+                        model_name=model_name, phase=phase,
                         pos_weight=pos_weight, **kwargs)

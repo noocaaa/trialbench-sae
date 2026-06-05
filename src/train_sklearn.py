@@ -7,6 +7,12 @@ from src import config
 from src.evaluate import evaluate
 from src.utils import find_best_threshold
 
+try:
+    import joblib
+    _JOBLIB_AVAILABLE = True
+except ImportError:
+    _JOBLIB_AVAILABLE = False
+
 def train_sklearn_model(model, X_train, X_test, y_train, y_test, model_name, phase,
                         pos_weight=None, tune_threshold=True, threshold_criterion="f1",
                         cal_split=None, X_cal=None, y_cal=None, threshold=None,
@@ -107,8 +113,27 @@ def train_sklearn_model(model, X_train, X_test, y_train, y_test, model_name, pha
 
     if save_artifacts:
         save_model_info(model, model_name, phase, pos_weight=pos_weight, threshold=threshold)
+        _save_sklearn_model(model, model_name, phase)
 
     return model
+
+
+def _save_sklearn_model(model, model_name, phase, fold_idx=None):
+    """Save fitted sklearn model to disk for later SHAP analysis."""
+    if not _JOBLIB_AVAILABLE:
+        return
+    save_dir = "models/saved"
+    os.makedirs(save_dir, exist_ok=True)
+    suffix = f"_fold{fold_idx}" if fold_idx is not None else ""
+    base_name = model_name.replace(' ', '_')
+    path = f"{save_dir}/{base_name}_{phase}{suffix}.joblib"
+    joblib.dump(model, path)
+    # Also save feature count for SHAP reference
+    if hasattr(model, 'n_features_in_'):
+        meta = {'n_features_in': model.n_features_in_}
+        meta_path = f"{save_dir}/{base_name}_{phase}{suffix}_meta.json"
+        with open(meta_path, 'w') as f:
+            json.dump(meta, f)
 
 
 def save_model_info(model, model_name, phase, pos_weight=None, threshold=None):

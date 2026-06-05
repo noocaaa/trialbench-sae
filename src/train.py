@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from src import config
 from src.evaluate import evaluate
 from src.utils import find_best_threshold
+from src.mlflow_tracker import tracker
 
 # GPU or CPU automatic detection and selection
 DEVICE = torch.device(
@@ -272,7 +273,8 @@ def train_model(
     # Save loss curve and checkpoint (only if save_artifacts=True)
     if save_artifacts:
         os.makedirs("results", exist_ok=True)
-        with open(f"results/loss_{model_name}_{phase}.json", "w") as f:
+        loss_path = f"results/loss_{model_name}_{phase}.json"
+        with open(loss_path, "w") as f:
             json.dump(history, f)
 
         if best_state is not None:
@@ -280,6 +282,13 @@ def train_model(
             checkpoint_path = f"models/checkpoints/{model_name}_{phase}.pt"
             torch.save(best_state, checkpoint_path)
             print(f"  Checkpoint saved -> {checkpoint_path}")
+
+        # ── Log to MLflow ──
+        if tracker.enabled and tracker.get_run_id() is not None:
+            tracker.log_training_curve(history)
+            tracker.log_artifact(loss_path)
+            if best_state is not None and os.path.exists(checkpoint_path):
+                tracker.log_artifact(checkpoint_path)
 
     # ── Threshold tuning on calibration set ──
     threshold = 0.5

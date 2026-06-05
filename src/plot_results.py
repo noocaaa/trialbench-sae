@@ -9,8 +9,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import dash
 from dash import dcc, html, Input, Output, callback
-from sklearn.metrics import confusion_matrix
 from sklearn.dummy import DummyClassifier
+from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 
 METRICS       = ["accuracy", "f1", "precision", "recall", "roc_auc", "pr_auc"]
 METRIC_LABELS = ["Accuracy", "F1", "Precision", "Recall", "ROC-AUC", "PR-AUC"]
@@ -570,7 +570,6 @@ def run(results_dir=None):
             dummy_rows = []
             try:
                 from src.data_loader import load_phase as lp
-                from sklearn.metrics import f1_score, roc_auc_score
                 for phase in ap:
                     X_tr, X_te, y_tr, y_te, _ = lp(phase)
                     d = DummyClassifier(strategy="most_frequent")
