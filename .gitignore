@@ -55,4 +55,4 @@ wandb/
 mlflow.db
 mlflow.db.*
 mlartifacts/
-mlruns/
+mlruns/apps.zip
