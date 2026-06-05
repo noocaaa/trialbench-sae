@@ -85,16 +85,16 @@ OPTUNA_SPACES = {
 
 DL_GRIDS = {
     "mlp": {
-        "hidden_dim": [128, 256, 512],
-        "dropout": [0.1, 0.3],
+        "hidden_dim": [128, 256],
+        "dropout": [0.3],
     },
     "cnn": {
-        "conv_channels": [16, 32, 64],
-        "dropout": [0.1, 0.3],
+        "conv_channels": [32, 64],
+        "dropout": [0.3],
     },
     "rnn": {
-        "hidden_dim": [32, 64, 128],
-        "dropout": [0.1, 0.3],
+        "hidden_dim": [64, 128],
+        "dropout": [0.3],
     },
 }
 
@@ -258,7 +258,7 @@ def tune_dl_grid(model_name, model_fn, X_train, y_train, X_val, y_val, pos_weigh
         patience = 3
         no_improve = 0
 
-        for epoch in range(20):
+        for epoch in range(10):
             model.train()
             for X_b, y_b in train_loader:
                 if X_b.size(0) < 2:

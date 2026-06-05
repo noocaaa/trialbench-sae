@@ -22,7 +22,7 @@ PATIENCE   = 5         # Epochs with no improvement before stopping
 
 # ── Nested Cross-Validation ───────────────────────────────────────
 OUTER_FOLDS = 5        # Number of outer folds (test sets)
-INNER_FOLDS = 3        # Number of inner folds (threshold calibration)
+INNER_FOLDS = 2        # Number of inner folds (threshold calibration)
 
 # ── Threshold Calibration ─────────────────────────────────────────
 TUNE_THRESHOLD = True           # If True, find optimal threshold on calibration set
