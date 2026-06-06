@@ -1,6 +1,6 @@
 ﻿**********************
 Inicio de la transcripción de Windows PowerShell
-Hora de inicio: 20260606115640
+Hora de inicio: 20260606120111
 Nombre de usuario: NOELIAPC\noeli
 Usuario RunAs: NOELIAPC\noeli
 Nombre de la configuración: 
@@ -16,28 +16,6 @@ WSManStackVersion: 3.0
 PSRemotingProtocolVersion: 2.3
 SerializationVersion: 1.1.0.1
 **********************
-La transcripción ha comenzado. El archivo de salida es training_log_v2.txt
-    x = self.self_attn(x, x, x,
-        ^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\torch\nn\modules\module.py", l
-ine 1501, in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\torch\nn\modules\activation.py
-", line 1189, in forward
-    attn_output, attn_output_weights = F.multi_head_attention_forward(
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\torch\nn\functional.py", line
-5337, in multi_head_attention_forward
-    attn_output = linear(attn_output, out_proj_weight, out_proj_bias)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-KeyboardInterrupt
-(.venv) ErrorTerminación(): "Se ha detenido la canalización."
->> ErrorTerminación(): "Se ha detenido la canalización."
-PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
-(.venv) clear
-PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
-(.venv) Start-Transcript -Path training_log_v3.txt; .venv/Scripts/python run_all.py --nested --tune --use-text --shap; Stop-Transcript
 La transcripción ha comenzado. El archivo de salida es training_log_v3.txt
 y", line 585, in _sa_block
     return self.dropout1(x)

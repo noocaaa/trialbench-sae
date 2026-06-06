@@ -70,19 +70,28 @@ def _build_text_column(df, text_cols):
     
     Each column is prefixed with its name so TF-IDF can distinguish
     the same word in different contexts (e.g., "title: cancer" vs "condition: cancer").
+    
+    Optimized: uses vectorized apply instead of row-by-row iloc.
     """
-    documents = []
-    for idx in range(len(df)):
-        parts = []
-        for col in text_cols:
-            if col in df.columns:
-                raw = df.iloc[idx][col]
-                cleaned = _clean_text(raw)
-                if cleaned:
-                    # Prefix with column name for context
-                    prefix = col.replace("/", "_").replace("-", "_")
-                    parts.append(f"{prefix} {cleaned}")
-        documents.append(" ".join(parts) if parts else "no_text")
+    available_cols = [c for c in text_cols if c in df.columns]
+    if not available_cols:
+        return ["no_text"] * len(df)
+    
+    # Vectorized: clean each column separately, then combine
+    cleaned_cols = []
+    for col in available_cols:
+        prefix = col.replace("/", "_").replace("-", "_")
+        # Apply _clean_text to the entire column at once
+        cleaned = df[col].apply(_clean_text)
+        # Prefix non-empty entries
+        prefixed = cleaned.where(cleaned == "", cleaned.apply(lambda x: f"{prefix} {x}" if x else ""))
+        cleaned_cols.append(prefixed)
+    
+    # Combine all columns per row
+    combined = pd.DataFrame(cleaned_cols).T.fillna("").agg(lambda row: " ".join(x for x in row if x), axis=1)
+    # Replace empty strings with "no_text"
+    documents = combined.str.strip().replace("", "no_text").tolist()
+    
     return documents
 
 

@@ -1,0 +1,36 @@
+﻿**********************
+Inicio de la transcripción de Windows PowerShell
+Hora de inicio: 20260606133229
+Nombre de usuario: NOELIAPC\noeli
+Usuario RunAs: NOELIAPC\noeli
+Nombre de la configuración: 
+Máquina: NOELIAPC (Microsoft Windows NT 10.0.26200.0)
+Aplicación host: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -noexit -command try { . "c:\Users\noeli\AppData\Local\Programs\Microsoft VS Code\8761a5560c\resources\app\out\vs\workbench\contrib\terminal\common\scripts\shellIntegration.ps1" } catch {}
+Id. de proceso: 23908
+PSVersion: 5.1.26100.8457
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.8457
+BuildVersion: 10.0.26100.8457
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+La transcripción ha comenzado. El archivo de salida es training_log_v4.txt
+          ~~~~~~~^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\pandas\core\indexing.py", line 1192, in __getitem__
+    return self._getitem_axis(maybe_callable, axis=axis)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\pandas\core\indexing.py", line 1755, in _getitem_axis
+    return self.obj._ixs(key, axis=axis)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\pandas\core\frame.py", line 4007, in _ixs
+    new_mgr = self._mgr.fast_xs(i)
+              ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\pandas\core\internals\managers.py", line 1021, in fast_xs
+    result[rl] = blk.iget((i, loc))
+    ~~~~~~^^^^
+KeyboardInterrupt
+PS>ErrorTerminación(): "Se ha detenido la canalización."
+>> ErrorTerminación(): "Se ha detenido la canalización."
+PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
