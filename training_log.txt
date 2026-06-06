@@ -17,3 +17,50 @@ PSRemotingProtocolVersion: 2.3
 SerializationVersion: 1.1.0.1
 **********************
 La transcripción ha comenzado. El archivo de salida es training_log.txt
+    run_nested_model(name, phase, use_text=use_text, tune=tune)
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\run_all.py", line 222, in run_nested_model
+    nested_cv_single_model(
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\src\nested_cv.py", line 453, in nested_cv_single_model
+    y_prob, y_pred = _eval_dl(
+                     ^^^^^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\src\nested_cv.py", line 173, in _eval_dl
+    loss.backward()
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\torch\_tensor.py", line 487, i
+n backward
+    torch.autograd.backward(
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\torch\autograd\__init__.py", l
+ine 200, in backward
+    Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+KeyboardInterrupt
+PS>ErrorTerminación(): "Se ha detenido la canalización."
+>> ErrorTerminación(): "Se ha detenido la canalización."
+PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
+(.venv) clear
+PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
+(.venv) .venv/Scripts/python run_all.py --nested --tune --use-text --shap
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\sqlalchemy\orm\session.py", li
+ne 4454, in _flush
+    flush_context.finalize_flush_changes()
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\sqlalchemy\orm\unitofwork.py",
+ line 486, in finalize_flush_changes
+    self.session._register_persistent(other)
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\sqlalchemy\orm\session.py", li
+ne 3350, in _register_persistent
+    pending_to_persistent = self.dispatch.pending_to_persistent or None
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project\.venv\Lib\site-packages\sqlalchemy\event\attr.py", lin
+e 400, in __bool__
+    return bool(self.parent_listeners)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+(.venv) ErrorTerminación(): "Se ha detenido la canalización."
+>> ErrorTerminación(): "Se ha detenido la canalización."
+PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
+(.venv) clear
+PS C:\Users\noeli\Documents\Master\2 Semester\AI4Science\Project>
+(.venv) Start-Transcript -Path training_log.txt; .venv/Scripts/python run_all.py --nested --tune --use-text --shap; Stop-Transcript
+**********************
+Fin de la transcripción de Windows PowerShell
+Hora de finalización: 20260606115624
+**********************

@@ -136,6 +136,19 @@ def _save_sklearn_model(model, model_name, phase, fold_idx=None):
             json.dump(meta, f)
 
 
+def _make_json_serializable(obj):
+    """Convert objects to JSON-serializable types."""
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    elif isinstance(obj, (list, tuple)):
+        return [_make_json_serializable(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {str(k): _make_json_serializable(v) for k, v in obj.items()}
+    else:
+        # Convert non-serializable objects (e.g., estimators) to their string representation
+        return str(obj)
+
+
 def save_model_info(model, model_name, phase, pos_weight=None, threshold=None):
     """Save model hyperparameters and info."""
     os.makedirs("results", exist_ok=True)
@@ -143,7 +156,7 @@ def save_model_info(model, model_name, phase, pos_weight=None, threshold=None):
     info = {
         'model_type': model_name,
         'phase': phase,
-        'model_params': model.get_params()
+        'model_params': _make_json_serializable(model.get_params())
     }
 
     # Add model-specific info
@@ -158,4 +171,4 @@ def save_model_info(model, model_name, phase, pos_weight=None, threshold=None):
         info['threshold'] = round(float(threshold), 4)
 
     with open(f"results/{model_name}_{phase}_info.json", "w") as f:
-        json.dump(info, f)
+        json.dump(info, f, indent=2)
