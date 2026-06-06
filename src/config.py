@@ -3,7 +3,7 @@
 
 # ── Training ──────────────────────────────────────────────────────
 EPOCHS     = 100
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 LR         = 3e-4
 WEIGHT_DECAY = 1e-4
 
