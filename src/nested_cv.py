@@ -35,16 +35,62 @@ from src.mlflow_tracker import tracker
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _save_for_shap(model_name, phase, fold_idx, model, X_test, y_test, 
+                     n_features=None, is_dl=False, hyperparams=None, threshold=None):
+    """
+    Save trained model and test data for future SHAP analysis.
+    
+    This allows post-hoc explainability without retraining.
+    Feature names are NOT saved here because they depend on post-preprocessing
+    (one-hot encoding, text features, etc.). Use _get_feature_names_from_preprocessed()
+    in run_shap_final.py to reconstruct them.
+    """
+    save_dir = "models/shap_ready"
+    os.makedirs(save_dir, exist_ok=True)
+    
+    clean_name = model_name.replace(" ", "_")
+    prefix = f"{save_dir}/{clean_name}_{phase}_fold{fold_idx}"
+    
+    # 1. Save model
+    if is_dl:
+        # PyTorch model
+        torch.save(model.state_dict(), f"{prefix}_model.pt")
+    else:
+        # Sklearn model
+        import joblib
+        joblib.dump(model, f"{prefix}_model.joblib")
+    
+    # 2. Save test data
+    np.save(f"{prefix}_X_test.npy", X_test)
+    np.save(f"{prefix}_y_test.npy", y_test)
+    
+    # 3. Save metadata (hyperparams, threshold, n_features)
+    metadata = {
+        "model_name": model_name,
+        "phase": phase,
+        "fold": fold_idx,
+        "is_dl": is_dl,
+        "n_features": n_features,
+        "threshold": threshold,
+        "hyperparams": hyperparams or {},
+    }
+    with open(f"{prefix}_metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"    Saved SHAP-ready artifacts -> {prefix}_*")
+
+
 def _load_raw_phase(phase, data_dir=None):
     """Load raw (unprocessed) train+test DataFrames and merge them."""
     if data_dir is None:
         data_dir = _DEFAULT_DATA
 
+    from src.data_loader import _read_csv_cached
     base = f"{data_dir}/Phase{phase}"
-    X_train = pd.read_csv(f"{base}/train_x.csv")
-    y_train = pd.read_csv(f"{base}/train_y.csv")
-    X_test = pd.read_csv(f"{base}/test_x.csv")
-    y_test = pd.read_csv(f"{base}/test_y.csv")
+    X_train = _read_csv_cached(f"{base}/train_x.csv")
+    y_train = _read_csv_cached(f"{base}/train_y.csv")
+    X_test = _read_csv_cached(f"{base}/test_x.csv")
+    y_test = _read_csv_cached(f"{base}/test_y.csv")
 
     y_train = y_train["Y/N"].values.astype(int)
     y_test = y_test["Y/N"].values.astype(int)
@@ -68,28 +114,36 @@ def _train_dl_for_threshold(model_fn, model_kwargs, X_train, y_train, X_val, y_v
     model = model_fn(**model_kwargs).to(DEVICE)
     
     # Simple training loop (no checkpointing, no file I/O)
-    epochs = min(30, config.EPOCHS)  # Shorter for inner loop
+    epochs = min(config.INNER_EPOCHS, config.EPOCHS)  # Shorter for inner loop
     batch_size = min(config.BATCH_SIZE, len(X_train))
     
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_train).to(DEVICE),
+            torch.tensor(X_train, dtype=torch.float32).to(DEVICE),
             torch.tensor(y_train, dtype=torch.float32).to(DEVICE),
         ),
         batch_size=batch_size, shuffle=True,
     )
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY)
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
-    )
+    if config.USE_ASYMMETRIC_LOSS:
+        from src.losses import AsymmetricBCELoss
+        criterion = AsymmetricBCELoss(
+            fn_penalty=config.FN_PENALTY,
+            fp_penalty=config.FP_PENALTY,
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
+    else:
+        criterion = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
     
-    X_val_tensor = torch.tensor(X_val).to(DEVICE)
+    X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(DEVICE)
     y_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(DEVICE)
     
     best_val_loss = float("inf")
     best_state = None
-    patience = 5
+    patience = config.INNER_PATIENCE
     epochs_no_improve = 0
     
     for epoch in range(epochs):
@@ -123,7 +177,7 @@ def _train_dl_for_threshold(model_fn, model_kwargs, X_train, y_train, X_val, y_v
     return model
 
 
-def _eval_dl(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weight, threshold):
+def _eval_dl(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weight, threshold, fold_seed_offset=0):
     """Train final DL model and evaluate with a fixed threshold."""
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -131,9 +185,10 @@ def _eval_dl(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weigh
     model = model_fn(**model_kwargs).to(DEVICE)
     
     # Split train into train/val for early stopping
+    # Use fold-dependent seed so different folds have different validation splits
     X_tr, X_val, y_tr, y_val = train_test_split(
         X_train, y_train, test_size=config.VAL_SPLIT,
-        random_state=42, stratify=y_train,
+        random_state=config.RANDOM_STATE + fold_seed_offset, stratify=y_train,
     )
     
     epochs = config.EPOCHS
@@ -143,18 +198,26 @@ def _eval_dl(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weigh
     
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_tr).to(DEVICE),
+            torch.tensor(X_tr, dtype=torch.float32).to(DEVICE),
             torch.tensor(y_tr, dtype=torch.float32).to(DEVICE),
         ),
         batch_size=batch_size, shuffle=True,
     )
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY)
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
-    )
+    if config.USE_ASYMMETRIC_LOSS:
+        from src.losses import AsymmetricBCELoss
+        criterion = AsymmetricBCELoss(
+            fn_penalty=config.FN_PENALTY,
+            fp_penalty=config.FP_PENALTY,
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
+    else:
+        criterion = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
     
-    X_val_tensor = torch.tensor(X_val).to(DEVICE)
+    X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(DEVICE)
     y_val_tensor = torch.tensor(y_val, dtype=torch.float32).to(DEVICE)
     
     best_val_loss = float("inf")
@@ -201,7 +264,7 @@ def _eval_dl(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weigh
         logits = model(torch.tensor(X_test, dtype=torch.float32).to(DEVICE))
         y_prob = torch.sigmoid(logits).cpu().numpy()
     y_pred = (y_prob >= threshold).astype(int)
-    return y_prob, y_pred
+    return y_prob, y_pred, model
 
 
 def _eval_sklearn(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_weight, threshold,
@@ -226,7 +289,7 @@ def _eval_sklearn(model_fn, model_kwargs, X_train, y_train, X_test, y_test, pos_
     else:
         y_prob = model.predict(X_test).astype(float)
     y_pred = (y_prob >= threshold).astype(int)
-    return y_prob, y_pred
+    return y_prob, y_pred, model
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +340,18 @@ def nested_cv_single_model(
     # Load full dataset (train + test merged)
     X_raw, y = _load_raw_phase(phase)
 
-    outer_skf = StratifiedKFold(n_splits=outer_folds, shuffle=True, random_state=42)
+    # ── Pre-build document strings once for text features ──
+    # This avoids rebuilding documents 5 times (once per fold).
+    # Documents are pure functions of row content, so safe to cache.
+    # TF-IDF vectorizer still fits on each fold's train set separately — no leakage.
+    all_docs = None
+    if use_text:
+        from src.text_features import TEXT_COLUMNS_TO_USE, _build_text_column
+        available_cols = [c for c in TEXT_COLUMNS_TO_USE if c in X_raw.columns]
+        if available_cols:
+            all_docs = _build_text_column(X_raw, available_cols)
+
+    outer_skf = StratifiedKFold(n_splits=outer_folds, shuffle=True, random_state=config.RANDOM_STATE)
     fold_results = []
 
     for outer_idx, (outer_train_idx, outer_test_idx) in enumerate(outer_skf.split(X_raw, y)):
@@ -295,6 +369,10 @@ def nested_cv_single_model(
         # ------------------------------------------------------------------
         # 2. Preprocess with NO leakage (fit on outer train only)
         # ------------------------------------------------------------------
+        # Slice pre-built documents for this fold
+        train_docs = [all_docs[i] for i in outer_train_idx] if all_docs else None
+        test_docs = [all_docs[i] for i in outer_test_idx] if all_docs else None
+        
         X_outer_train, X_outer_test = preprocess_cv(
             X_outer_train_raw,
             X_outer_test_raw,
@@ -302,6 +380,8 @@ def nested_cv_single_model(
             for_tree=is_tree,
             verbose=(verbose and outer_idx == 0),
             use_text=use_text,
+            precomputed_train_docs=train_docs,
+            precomputed_test_docs=test_docs,
         )
 
         # ------------------------------------------------------------------
@@ -332,7 +412,7 @@ def nested_cv_single_model(
         # FIX #3: Independent random seeds.
         # ------------------------------------------------------------------
 
-        inner_seed = 42 + outer_idx * 1000
+        inner_seed = config.RANDOM_STATE + outer_idx * 1000
 
         # ── Step 1: Hyperparameter tuning (if enabled) ──
         best_params = None
@@ -450,14 +530,15 @@ def nested_cv_single_model(
         # Use effective_kwargs (defaults + tuned params) for final training.
         # ------------------------------------------------------------------
         if is_dl:
-            y_prob, y_pred = _eval_dl(
+            y_prob, y_pred, trained_model = _eval_dl(
                 model_fn, effective_kwargs,
                 X_outer_train, y_outer_train,
                 X_outer_test, y_outer_test,
                 pos_weight, threshold,
+                fold_seed_offset=outer_idx * 100,
             )
         else:
-            y_prob, y_pred = _eval_sklearn(
+            y_prob, y_pred, trained_model = _eval_sklearn(
                 model_fn, effective_kwargs,
                 X_outer_train, y_outer_train,
                 X_outer_test, y_outer_test,
@@ -485,6 +566,16 @@ def nested_cv_single_model(
         fold_path = f"results/{model_name.replace(' ', '_')}_{phase}_fold{outer_idx}.json"
         with open(fold_path, "w") as f:
             json.dump(metrics, f, indent=2)
+
+        # ── Save model + test data for future SHAP analysis ──
+        _save_for_shap(
+            model_name, phase, outer_idx,
+            trained_model, X_outer_test, y_outer_test,
+            n_features=X_outer_train.shape[1],
+            is_dl=is_dl,
+            hyperparams=effective_kwargs,
+            threshold=threshold,
+        )
 
         # ── Log to MLflow ──
         if tracker.enabled:

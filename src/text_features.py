@@ -34,6 +34,24 @@ TFIDF_MAX_DF = 0.95           # Ignore terms that appear in > 95% of documents
 TFIDF_NGRAM_RANGE = (1, 2)    # Unigrams + bigrams
 
 
+def _make_vectorizer(max_features=None, min_df=None, max_df=None, ngram_range=None):
+    """
+    Create a TfidfVectorizer with project defaults.
+    
+    Single source of truth for TF-IDF configuration.
+    Both extract_text_features() and preprocess_cv() use this.
+    """
+    return TfidfVectorizer(
+        max_features=max_features if max_features is not None else TFIDF_MAX_FEATURES,
+        min_df=min_df if min_df is not None else TFIDF_MIN_DF,
+        max_df=max_df if max_df is not None else TFIDF_MAX_DF,
+        ngram_range=ngram_range if ngram_range is not None else TFIDF_NGRAM_RANGE,
+        stop_words="english",
+        lowercase=True,
+        strip_accents="unicode",
+    )
+
+
 def _clean_text(text):
     """
     Clean raw text for TF-IDF.
@@ -71,7 +89,10 @@ def _build_text_column(df, text_cols):
     Each column is prefixed with its name so TF-IDF can distinguish
     the same word in different contexts (e.g., "title: cancer" vs "condition: cancer").
     
-    Optimized: uses vectorized apply instead of row-by-row iloc.
+    Optimized: uses vectorized apply.
+    
+    NOTE: For nested CV, call this ONCE on the full dataset before the fold loop,
+    then slice by index. See nested_cv_single_model() for the caching pattern.
     """
     available_cols = [c for c in text_cols if c in df.columns]
     if not available_cols:
@@ -147,14 +168,11 @@ def extract_text_features(
     test_docs = _build_text_column(X_test_raw, available_cols)
 
     # Fit TF-IDF on training data only (no leakage)
-    vectorizer = TfidfVectorizer(
+    vectorizer = _make_vectorizer(
         max_features=max_features,
         min_df=min_df,
         max_df=max_df,
         ngram_range=ngram_range,
-        stop_words="english",
-        lowercase=True,
-        strip_accents="unicode",
     )
 
     X_train_text = vectorizer.fit_transform(train_docs)

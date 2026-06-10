@@ -1,7 +1,5 @@
 import torch.nn as nn
 from src import config
-from src.data_loader import load_phase
-from src.train import train_model, DEVICE
 
 
 class MLP(nn.Module):
@@ -23,9 +21,3 @@ class MLP(nn.Module):
         return self.net(x).squeeze(1)
 
 
-def run(phase, use_text=False, **kwargs):
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, use_text=use_text)
-    model_name = "MLP+Text" if use_text else "MLP"
-    train_model(MLP(X_train.shape[1], **kwargs).to(DEVICE),
-                X_train, X_test, y_train, y_test,
-                pos_weight, model_name=model_name, phase=phase, **kwargs)

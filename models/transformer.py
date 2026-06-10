@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 from src import config
-from src.data_loader import load_phase
-from src.train import train_model, DEVICE
 
 
 class Transformer(nn.Module):
@@ -56,9 +54,3 @@ class Transformer(nn.Module):
         return self.fc(cls_out).squeeze(1)
 
 
-def run(phase, use_text=False, **kwargs):
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, use_text=use_text)
-    model_name = "Transformer+Text" if use_text else "Transformer"
-    train_model(Transformer(X_train.shape[1], **kwargs).to(DEVICE),
-                X_train, X_test, y_train, y_test,
-                pos_weight, model_name=model_name, phase=phase, **kwargs)

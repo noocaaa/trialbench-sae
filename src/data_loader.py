@@ -3,9 +3,6 @@ import random
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.preprocessing import StandardScaler, OrdinalEncoder
-from sklearn.impute import SimpleImputer
-
 # ── Text columns — dropped because models can't process raw text ──
 TEXT_COLS = [
     "brief_summary/textblock",
@@ -40,15 +37,23 @@ SEED = 42
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_DATA = os.path.join(_PROJECT_ROOT, "data", "serious-adverse-event-forecasting")
 
+# ── CSV Cache ─────────────────────────────────────────────────────
+# Cache DataFrames in memory to avoid re-reading CSVs multiple times
+# (especially important for nested CV with 5+ folds per phase)
+_CSV_CACHE = {}
 
-def set_seed(seed=SEED):
-    """Set all random seeds globally for reproducibility."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark     = False
+
+def _read_csv_cached(path):
+    """Read CSV with in-memory caching."""
+    if path not in _CSV_CACHE:
+        _CSV_CACHE[path] = pd.read_csv(path)
+    return _CSV_CACHE[path]
+
+
+def clear_csv_cache():
+    """Clear the CSV cache (useful before re-running experiments)."""
+    global _CSV_CACHE
+    _CSV_CACHE = {}
 
 
 def load_phase(phase, data_dir=None, verbose=False, for_tree=False, use_text=False, text_max_features=100):
@@ -90,10 +95,10 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False, use_text=Fal
         if not os.path.isfile(p):
             raise FileNotFoundError(f"Required file not found: {p}")
 
-    X_train_raw = pd.read_csv(train_x_path)
-    y_train = pd.read_csv(train_y_path)
-    X_test_raw  = pd.read_csv(test_x_path)
-    y_test  = pd.read_csv(test_y_path)
+    X_train_raw = _read_csv_cached(train_x_path)
+    y_train = _read_csv_cached(train_y_path)
+    X_test_raw  = _read_csv_cached(test_x_path)
+    y_test  = _read_csv_cached(test_y_path)
 
     y_train = y_train["Y/N"].values.astype(int)
     y_test  = y_test["Y/N"].values.astype(int)
@@ -104,26 +109,11 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False, use_text=Fal
     if len(set(np.unique(y_train)) - {0, 1}) > 0:
         raise ValueError("y_train contains non-binary values (must be 0 or 1)")
 
-    # ── Extract text features BEFORE preprocessing drops text columns ──
-    if use_text:
-        from src.text_features import extract_text_features
-        X_train_text, X_test_text = extract_text_features(
-            X_train_raw, X_test_raw, phase=phase, verbose=verbose, max_features=text_max_features
-        )
-    else:
-        X_train_text = X_test_text = None
-
-    # ── Preprocess tabular features ──
-    X_train, X_test = _preprocess(
-        X_train_raw, X_test_raw, phase=phase, verbose=verbose, for_tree=for_tree
+    # ── Preprocess using unified pipeline (same as nested CV) ──
+    from src.cv_preprocessing import preprocess_cv
+    X_train, X_test = preprocess_cv(
+        X_train_raw, X_test_raw, phase=phase, for_tree=for_tree, verbose=verbose, use_text=use_text
     )
-
-    # ── Concatenate text features if requested ──
-    if use_text and X_train_text is not None and X_train_text.shape[1] > 0:
-        X_train = np.hstack([X_train, X_train_text])
-        X_test = np.hstack([X_test, X_test_text])
-        if verbose:
-            print(f"    Combined features : tabular+text = {X_train.shape[1]}")
 
     if X_train.shape[0] != y_train.shape[0]:
         raise ValueError(f"X_train/y_train shape mismatch: {X_train.shape[0]} vs {y_train.shape[0]}")
@@ -137,70 +127,3 @@ def load_phase(phase, data_dir=None, verbose=False, for_tree=False, use_text=Fal
     return X_train, X_test, y_train, y_test, pos_weight
 
 
-def _preprocess(X_train, X_test, phase="?", verbose=False, for_tree=False):
-    n_original = len(X_train.columns)
-
-    # ── Step 1: drop ID column and text columns ───────────────────
-    drop_cols = ["Unnamed: 0"] + [c for c in TEXT_COLS if c in X_train.columns]
-    X_train = X_train.drop(columns=drop_cols, errors="ignore")
-    X_test  = X_test.drop(columns=drop_cols, errors="ignore")
-    n_after_text = len(X_train.columns)
-
-    # ── Step 2: drop zero-variance columns (same value always) ────
-    zero_var = [c for c in ZERO_VARIANCE_COLS if c in X_train.columns]
-    X_train = X_train.drop(columns=zero_var, errors="ignore")
-    X_test  = X_test.drop(columns=zero_var, errors="ignore")
-    n_after_zero = len(X_train.columns)
-
-    # ── Step 3: drop columns with >80% missing values ─────────────
-    # Computed on train set only to avoid data leakage
-    null_rates  = X_train.isnull().mean()
-    high_null   = null_rates[null_rates > NULL_THRESHOLD].index.tolist()
-    X_train = X_train.drop(columns=high_null, errors="ignore")
-    X_test  = X_test.drop(columns=high_null, errors="ignore")
-    n_after_null = len(X_train.columns)
-
-    # ── Step 4: encode categorical columns ─────────────────────────
-    cat_cols = X_train.select_dtypes(include="object").columns.tolist()
-    if cat_cols:
-        if for_tree:
-            # Tree models: ordinal encoding (no dummies, no scaling later)
-            for col in cat_cols:
-                fill_val = X_train[col].mode().iloc[0] if not X_train[col].mode().empty else "missing"
-                X_train[col] = X_train[col].fillna(fill_val)
-                X_test[col] = X_test[col].fillna(fill_val)
-            oe = OrdinalEncoder(
-                handle_unknown="use_encoded_value", unknown_value=-1
-            )
-            X_train[cat_cols] = oe.fit_transform(X_train[cat_cols])
-            X_test[cat_cols] = oe.transform(X_test[cat_cols])
-        else:
-            # Other models: one-hot encoding
-            X_train = pd.get_dummies(X_train, columns=cat_cols, dummy_na=False)
-            X_test = pd.get_dummies(X_test, columns=cat_cols, dummy_na=False)
-            # Align test columns to train (handle unseen categories in either split)
-            X_test = X_test.reindex(columns=X_train.columns, fill_value=0)
-
-    # ── Step 5: impute remaining missing values with median ────────
-    imputer = SimpleImputer(strategy="median")
-    X_train = imputer.fit_transform(X_train)
-    X_test  = imputer.transform(X_test)
-
-    # ── Step 6: standardize (skip for tree-based models) ───────────
-    if not for_tree:
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train)
-        X_test = scaler.transform(X_test)
-
-    # ── Summary ───────────────────────────────────────────────────
-    if verbose:
-        print(f"\n  Phase {phase} — Feature selection summary:")
-        print(f"    Original columns     : {n_original}")
-        print(f"    After dropping text  : {n_after_text}  (-{n_original - n_after_text} text cols)")
-        print(f"    After zero-variance  : {n_after_zero}  (-{n_after_text - n_after_zero} constant cols)")
-        print(f"    After high nulls     : {n_after_null}  (-{n_after_zero - n_after_null} cols >{NULL_THRESHOLD*100:.0f}% null)")
-        print(f"    Final feature count  : {n_after_null}")
-        if high_null:
-            print(f"    Dropped (high null)  : {high_null}")
-
-    return X_train.astype(np.float32), X_test.astype(np.float32)

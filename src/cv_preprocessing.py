@@ -13,7 +13,8 @@ from sklearn.impute import SimpleImputer
 from src.data_loader import TEXT_COLS, ZERO_VARIANCE_COLS, NULL_THRESHOLD
 
 
-def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False, use_text=False):
+def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False, use_text=False,
+                    precomputed_train_docs=None, precomputed_test_docs=None):
     """
     Preprocess train/test splits for cross-validation with NO data leakage.
 
@@ -27,6 +28,8 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False, use
     for_tree : bool — if True, use OrdinalEncoder + no standardization
     verbose  : bool — if True, print feature selection summary
     use_text : bool — if True, append TF-IDF features from text columns
+    precomputed_train_docs : list — pre-built document strings for train (optional, for caching)
+    precomputed_test_docs  : list — pre-built document strings for test (optional, for caching)
 
     Returns
     -------
@@ -40,10 +43,18 @@ def preprocess_cv(X_train, X_test, phase="?", for_tree=False, verbose=False, use
     # ── Extract text features BEFORE dropping text columns ──────────
     X_train_text = X_test_text = None
     if use_text:
-        from src.text_features import extract_text_features
-        X_train_text, X_test_text = extract_text_features(
-            X_tr, X_te, phase=phase, verbose=verbose
-        )
+        if precomputed_train_docs is not None and precomputed_test_docs is not None:
+            # Use pre-built documents (cached from full dataset)
+            from src.text_features import _make_vectorizer
+            
+            vectorizer = _make_vectorizer()
+            X_train_text = vectorizer.fit_transform(precomputed_train_docs).toarray().astype(np.float32)
+            X_test_text = vectorizer.transform(precomputed_test_docs).toarray().astype(np.float32)
+        else:
+            from src.text_features import extract_text_features
+            X_train_text, X_test_text = extract_text_features(
+                X_tr, X_te, phase=phase, verbose=verbose
+            )
 
     # ── Step 1: drop ID column and text columns ───────────────────
     drop_cols = ["Unnamed: 0"] + [c for c in TEXT_COLS if c in X_tr.columns]

@@ -75,7 +75,7 @@ def train_sklearn_model(model, X_train, X_test, y_train, y_test, model_name, pha
         # (sklearn models do not need a validation set for early stopping)
         X_tr, X_cal, y_tr, y_cal = train_test_split(
             X_train, y_train, test_size=cal_split,
-            random_state=42, stratify=y_train,
+            random_state=config.RANDOM_STATE, stratify=y_train,
         )
 
         # Fit on training portion

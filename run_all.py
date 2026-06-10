@@ -1,40 +1,33 @@
 """
-Run all models for SAE Prediction.
-
-Supports both simple train/test split evaluation and nested cross-validation.
+Run all models for SAE Prediction using nested cross-validation.
 
 Usage:
-    # Run all models with simple train/test split (default)
+    # Run all models with nested cross-validation
     python run_all.py
 
-    # Run all models with nested cross-validation
-    python run_all.py --nested
-
     # Run specific models
-    python run_all.py --models mlp cnn random_forest xgboost
+    python run_all.py --models xgboost lightgbm random_forest
 
     # Run with text features (TF-IDF from trial descriptions)
-    python run_all.py --models mlp --use-text
+    python run_all.py --models xgboost --use-text
 
-    # Run with hyperparameter tuning (sklearn models only)
-    python run_all.py --models xgboost random_forest --nested --tune
+    # Run with hyperparameter tuning
+    python run_all.py --models xgboost random_forest --tune
 
     # Run specific phases
-    python run_all.py --models mlp --phases 1 2
+    python run_all.py --models xgboost --phases 1 2
 
     # Clear old results and rerun
     python run_all.py --clear
 """
 import argparse
-import importlib
 import traceback
 import warnings
 
 # Silenciar warnings de sklearn sobre feature names (nested CV usa np.ndarray)
 warnings.filterwarnings("ignore", category=UserWarning, message=".*feature names.*")
 
-from src.data_loader import set_seed
-from src.utils import clear_results, print_results_table, get_best_model
+from src.utils import set_seed, clear_results
 
 # Nested CV imports
 from src.nested_cv import nested_cv_single_model
@@ -60,26 +53,6 @@ from models.ft_transformer import FTTransformer
 
 PHASES = ["1", "2", "3", "4"]
 
-# Model registry for simple train/test split: name -> (module_path, function_name)
-SIMPLE_MODELS = {
-    # Deep Learning models (PyTorch)
-    "mlp":                 ("models.mlp",                 "run"),
-    "cnn":                 ("models.cnn",                 "run"),
-    "rnn":                 ("models.rnn",                 "run"),
-    "transformer":         ("models.transformer",         "run"),
-
-    # Classical ML models (sklearn)
-    "logistic_regression": ("models.logistic_regression", "run"),
-    "random_forest":       ("models.random_forest",       "run"),
-    "svm":                 ("models.svm",                 "run"),
-    "knn":                 ("models.knn",                 "run"),
-    "xgboost":             ("models.xgboost_model",       "run"),
-    "lightgbm":            ("models.lightgbm_model",      "run"),
-    "ft_transformer":      ("models.ft_transformer",      "run"),
-
-
-}
-
 # Model registry for nested CV: name -> (is_tree, is_dl, display_name)
 NESTED_MODELS = {
     "logistic_regression": (False, False, "LogisticRegression"),
@@ -102,7 +75,7 @@ def _make_factory(name):
         def _logreg_factory(**kwargs):
             C = kwargs.get("C", 1.0)
             return LogisticRegression(
-                C=C, max_iter=1000, solver="lbfgs", random_state=42
+                C=C, max_iter=1000, solver="lbfgs", random_state=config.RANDOM_STATE
             )
         return _logreg_factory
     elif name == "random_forest":
@@ -113,7 +86,7 @@ def _make_factory(name):
             return RandomForestClassifier(
                 n_estimators=n_estimators, max_depth=max_depth,
                 min_samples_split=min_samples_split,
-                min_samples_leaf=1, random_state=42, n_jobs=-1,
+                min_samples_leaf=1, random_state=config.RANDOM_STATE, n_jobs=-1,
             )
         return _rf_factory
     elif name == "xgboost":
@@ -127,15 +100,17 @@ def _make_factory(name):
                 n_estimators=n_estimators, max_depth=max_depth,
                 learning_rate=learning_rate, subsample=subsample,
                 colsample_bytree=colsample_bytree, eval_metric="logloss",
-                random_state=42, n_jobs=-1,
+                random_state=config.RANDOM_STATE, n_jobs=-1,
             )
         return _xgb_factory
     elif name == "svm":
         def _svm_factory(**kwargs):
             C = kwargs.get("C", 1.0)
+            # Use cv=2 instead of cv=3 for faster calibration
+            # (minimal quality loss, ~33% speedup for SVM)
             return CalibratedClassifierCV(
-                LinearSVC(C=C, max_iter=10000, random_state=42),
-                method="sigmoid", cv=3,
+                LinearSVC(C=C, max_iter=10000, random_state=config.RANDOM_STATE),
+                method="sigmoid", cv=2,
             )
         return _svm_factory
     elif name == "knn":
@@ -166,32 +141,13 @@ def _make_factory(name):
                 n_estimators=n_estimators, max_depth=max_depth,
                 learning_rate=learning_rate, num_leaves=num_leaves,
                 subsample=subsample, colsample_bytree=colsample_bytree,
-                objective='binary', random_state=42, n_jobs=-1, verbose=-1,
+                objective='binary', random_state=config.RANDOM_STATE, n_jobs=-1, verbose=-1,
             )
         return _lgbm_factory
     elif name == "ft_transformer":
         return lambda **kwargs: FTTransformer(kwargs["input_dim"])
     else:
         raise ValueError(f"Unknown model: {name}")
-
-
-def run_simple_model(name, phase, use_text=False):
-    """Run a single model using simple train/test split."""
-    module_path, fn_name = SIMPLE_MODELS[name]
-    display_name = NESTED_MODELS.get(name, (False, False, name))[2]
-    is_dl = NESTED_MODELS.get(name, (False, False, name))[1]
-
-    try:
-        with tracker.start_run(display_name, phase=phase):
-            tracker.log_model_info(display_name, _get_default_params(name), is_dl=is_dl)
-            tracker.log_param("use_text", use_text)
-            tracker.log_param("mode", "simple_split")
-
-            module = importlib.import_module(module_path)
-            getattr(module, fn_name)(phase, use_text=use_text)
-    except Exception as e:
-        print(f"  [ERROR] {name} | phase {phase}: {e}")
-        traceback.print_exc()
 
 
 def run_nested_model(name, phase, use_text=False, tune=False):
@@ -235,6 +191,7 @@ def run_nested_model(name, phase, use_text=False, tune=False):
         print(f"  [ERROR] {name} | phase {phase}: {e}")
         traceback.print_exc()
 
+
 def _get_default_params(name):
     """Extract default hyperparameters from factory function for logging."""
     defaults = {
@@ -253,9 +210,9 @@ def _get_default_params(name):
     return defaults.get(name, {})
 
 
-def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=False):
+def main(models, phases, clear, use_text=False, tune=False, run_shap=False):
     """Run all requested models on all requested phases."""
-    set_seed()
+    set_seed(config.RANDOM_STATE)
 
     if clear:
         clear_results()
@@ -263,7 +220,7 @@ def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=Fal
     # ── Start MLflow experiment ──
     tracker.start_experiment(
         "SAE_Prediction",
-        nested=nested,
+        nested=True,
         use_text=use_text,
         tune=tune,
         n_models=len(models),
@@ -274,50 +231,14 @@ def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=Fal
     for phase in phases:
         print(f"\n{'='*60}\n  PHASE {phase}\n{'='*60}")
         for name in models:
-            if nested:
-                print(f"\n>> Running {name} (nested CV)...")
-                run_nested_model(name, phase, use_text=use_text, tune=tune)
-            else:
-                print(f"\n>> Running {name}...")
-                run_simple_model(name, phase, use_text=use_text)
+            print(f"\n>> Running {name}...")
+            run_nested_model(name, phase, use_text=use_text, tune=tune)
 
     print(f"\n{'='*60}\n  FINAL RESULTS\n{'='*60}")
-    if nested:
-        agg_df = aggregate_and_print()
-        # Log aggregated results to MLflow
-        if agg_df is not None and not agg_df.empty:
-            tracker.log_aggregated_results(agg_df.to_dict(orient="records"))
-    else:
-        print_results_table()
-        get_best_model(metric="f1")
-        get_best_model(metric="roc_auc")
-
-    # ── SHAP analysis (post-hoc) ──
-    if run_shap:
-        if not nested:
-            print("\n  [WARNING] --shap requires --nested. Skipping SHAP analysis.")
-        else:
-            print(f"\n{'='*60}\n  SHAP ANALYSIS\n{'='*60}")
-            # Sklearn models (pass display names, not registry keys)
-            sklearn_models = [
-                NESTED_MODELS[m][2]
-                for m in models
-                if m in NESTED_MODELS and not NESTED_MODELS[m][1]
-            ]
-            if sklearn_models:
-                print("\n>> Running SHAP for sklearn models...")
-                from src.shap_analysis import main as shap_main
-                shap_main(sklearn_models, phases, use_text=use_text)
-            # DL models (pass display names, not registry keys)
-            dl_models = [
-                NESTED_MODELS[m][2]
-                for m in models
-                if m in NESTED_MODELS and NESTED_MODELS[m][1]
-            ]
-            if dl_models:
-                print("\n>> Running SHAP for DL models...")
-                from src.shap_analysis_dl import main as shap_dl_main
-                shap_dl_main(dl_models, phases, use_text=use_text)
+    agg_df = aggregate_and_print()
+    # Log aggregated results to MLflow
+    if agg_df is not None and not agg_df.empty:
+        tracker.log_aggregated_results(agg_df.to_dict(orient="records"))
 
     from src.mlflow_tracker import MLFLOW_TRACKING_URI
     print(f"\n  [MLflow] View results: mlflow ui --backend-store-uri {MLFLOW_TRACKING_URI}")
@@ -326,12 +247,12 @@ def main(models, phases, clear, nested, use_text=False, tune=False, run_shap=Fal
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run all models for SAE prediction."
+        description="Run all models for SAE prediction using nested cross-validation."
     )
     parser.add_argument(
         "--models", nargs="+",
-        choices=list(SIMPLE_MODELS.keys()),
-        default=list(SIMPLE_MODELS.keys()),
+        choices=list(NESTED_MODELS.keys()),
+        default=list(NESTED_MODELS.keys()),
         help="Models to run (default: all 11 models)"
     )
     parser.add_argument(
@@ -345,21 +266,17 @@ if __name__ == "__main__":
         help="Clear previous results before running"
     )
     parser.add_argument(
-        "--nested", action="store_true",
-        help="Use nested cross-validation (5 outer x 3 inner folds) instead of simple train/test split"
-    )
-    parser.add_argument(
         "--use-text", action="store_true",
-        help="Use TF-IDF text features from trial descriptions (for supported models)"
+        help="Use TF-IDF text features from trial descriptions"
     )
     parser.add_argument(
         "--tune", action="store_true",
-        help="Enable hyperparameter tuning for sklearn models (nested CV only)"
+        help="Enable hyperparameter tuning for sklearn models"
     )
     parser.add_argument(
         "--shap", action="store_true",
-        help="Run SHAP analysis after training completes (requires --nested)"
+        help="Run SHAP analysis after training completes"
     )
     args = parser.parse_args()
 
-    main(args.models, args.phases, args.clear, args.nested, use_text=args.use_text, tune=args.tune, run_shap=args.shap)
+    main(args.models, args.phases, args.clear, use_text=args.use_text, tune=args.tune, run_shap=args.shap)

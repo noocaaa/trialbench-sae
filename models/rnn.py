@@ -1,7 +1,5 @@
 import torch.nn as nn
 from src import config
-from src.data_loader import load_phase
-from src.train import train_model, DEVICE   
 
 
 class RNN(nn.Module):
@@ -28,9 +26,3 @@ class RNN(nn.Module):
         return self.fc(h_n[-1]).squeeze(1)
 
 
-def run(phase, use_text=False, **kwargs):
-    X_train, X_test, y_train, y_test, pos_weight = load_phase(phase, use_text=use_text)
-    model_name = "RNN+Text" if use_text else "RNN"
-    train_model(RNN(X_train.shape[1], **kwargs).to(DEVICE),
-                X_train, X_test, y_train, y_test,
-                pos_weight, model_name=model_name, phase=phase, **kwargs)

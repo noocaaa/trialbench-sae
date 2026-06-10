@@ -27,6 +27,7 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score
 
+from src import config
 from src.mlflow_tracker import tracker
 
 
@@ -107,7 +108,7 @@ DL_FIXED = {
 
 # ── Core tuning functions ─────────────────────────────────────────
 
-def _cv_score(model_fn, params, X, y, n_folds=3, random_state=42):
+def _cv_score(model_fn, params, X, y, n_folds=3, random_state=config.RANDOM_STATE):
     """Cross-validate a model with given params, return mean ROC-AUC."""
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
     scores = []
@@ -162,7 +163,7 @@ def tune_sklearn_optuna(model_name, model_fn, X_train, y_train, n_trials=20, n_f
 
     def objective(trial):
         params = suggest_fn(trial)
-        return _cv_score(model_fn, params, X_train, y_train, n_folds=n_folds, random_state=42)
+        return _cv_score(model_fn, params, X_train, y_train, n_folds=n_folds, random_state=config.RANDOM_STATE)
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=verbose)

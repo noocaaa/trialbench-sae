@@ -94,7 +94,7 @@ def train_model(
     elif cal_split > 0:
         X_temp, X_cal, y_temp, y_cal = train_test_split(
             X_train, y_train, test_size=cal_split,
-            random_state=42, stratify=y_train,
+            random_state=config.RANDOM_STATE, stratify=y_train,
         )
     else:
         X_temp, y_temp = X_train, y_train
@@ -110,7 +110,7 @@ def train_model(
         adjusted_val_split = val_split / (1 - cal_split) if cal_split > 0 and X_cal is None else val_split
         X_tr, X_val, y_tr, y_val = train_test_split(
             X_temp, y_temp, test_size=adjusted_val_split,
-            random_state=43, stratify=y_temp,
+            random_state=config.RANDOM_STATE + 1, stratify=y_temp,
         )
     else:
         X_tr, y_tr = X_temp, y_temp
@@ -118,7 +118,7 @@ def train_model(
 
     train_loader = DataLoader(
         TensorDataset(
-            torch.tensor(X_tr).to(DEVICE),
+            torch.tensor(X_tr, dtype=torch.float32).to(DEVICE),
             torch.tensor(y_tr, dtype=torch.float32).to(DEVICE),
         ),
         batch_size=batch_size, shuffle=True,
@@ -142,9 +142,17 @@ def train_model(
         raise ValueError(f"Unknown optimizer in config: {config.OPTIMIZER}")
 
     # ── Loss function ───────────────────────────────────────────
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
-    )
+    if config.USE_ASYMMETRIC_LOSS:
+        from src.losses import AsymmetricBCELoss
+        criterion = AsymmetricBCELoss(
+            fn_penalty=config.FN_PENALTY,
+            fp_penalty=config.FP_PENALTY,
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
+    else:
+        criterion = nn.BCEWithLogitsLoss(
+            pos_weight=torch.tensor([pos_weight], dtype=torch.float32).to(DEVICE)
+        )
 
     # ── Scheduler ─────────────────────────────────────────────────
     sched_name = config.SCHEDULER.lower()
@@ -162,9 +170,9 @@ def train_model(
         raise ValueError(f"Unknown scheduler in config: {config.SCHEDULER}")
 
     # ── Cache tensors that never change during training ───────────
-    X_val_tensor = torch.tensor(X_val).to(DEVICE) if X_val is not None else None
-    X_cal_tensor = torch.tensor(X_cal).to(DEVICE) if X_cal is not None else None
-    X_test_tensor = torch.tensor(X_test).to(DEVICE)
+    X_val_tensor = torch.tensor(X_val, dtype=torch.float32).to(DEVICE) if X_val is not None else None
+    X_cal_tensor = torch.tensor(X_cal, dtype=torch.float32).to(DEVICE) if X_cal is not None else None
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(DEVICE)
 
     # ── Early stopping state ──────────────────────────────────────
     best_val_loss = float("inf")

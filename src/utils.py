@@ -26,6 +26,7 @@ def set_seed(seed=42):
 def find_best_threshold(y_true, y_prob, criterion="f1"):
     """
     Find the optimal classification threshold by grid search.
+    Vectorized implementation for speed.
 
     Parameters
     ----------
@@ -38,30 +39,44 @@ def find_best_threshold(y_true, y_prob, criterion="f1"):
     float — best threshold in [0.01, 0.99]
     """
     thresholds = np.arange(0.005, 1.0, 0.005)
-    best_score = -1
-    best_threshold = 0.5
-
-    for t in thresholds:
-        y_pred = (y_prob >= t).astype(int)
-
-        if criterion == "f1":
-            score = f1_score(y_true, y_pred, zero_division=0)
-        elif criterion == "youden":
-            tn = ((y_pred == 0) & (y_true == 0)).sum()
-            fp = ((y_pred == 1) & (y_true == 0)).sum()
-            fn = ((y_pred == 0) & (y_true == 1)).sum()
-            tp = ((y_pred == 1) & (y_true == 1)).sum()
-            tpr = tp / (tp + fn) if (tp + fn) > 0 else 0
-            tnr = tn / (tn + fp) if (tn + fp) > 0 else 0
-            score = tpr + tnr - 1
-        else:
-            raise ValueError(f"Unknown criterion: {criterion}. Use 'f1' or 'youden'.")
-
-        if score > best_score:
-            best_score = score
-            best_threshold = t
-
-    return float(best_threshold)
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    
+    # Vectorized: compare all thresholds at once
+    # shape: (n_thresholds, n_samples)
+    y_pred = (y_prob >= thresholds[:, None]).astype(int)
+    y_true_expanded = y_true[None, :]  # shape: (1, n_samples)
+    
+    if criterion == "f1":
+        # Vectorized TP, FP, FN for all thresholds
+        tp = ((y_pred == 1) & (y_true_expanded == 1)).sum(axis=1)
+        fp = ((y_pred == 1) & (y_true_expanded == 0)).sum(axis=1)
+        fn = ((y_pred == 0) & (y_true_expanded == 1)).sum(axis=1)
+        
+        precision = np.divide(tp, tp + fp, out=np.zeros_like(tp, dtype=float), where=(tp + fp) > 0)
+        recall = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=float), where=(tp + fn) > 0)
+        
+        f1_scores = np.divide(2 * precision * recall, precision + recall, 
+                              out=np.zeros_like(precision), where=(precision + recall) > 0)
+        
+        best_idx = np.argmax(f1_scores)
+        return float(thresholds[best_idx])
+        
+    elif criterion == "youden":
+        tp = ((y_pred == 1) & (y_true_expanded == 1)).sum(axis=1)
+        tn = ((y_pred == 0) & (y_true_expanded == 0)).sum(axis=1)
+        fp = ((y_pred == 1) & (y_true_expanded == 0)).sum(axis=1)
+        fn = ((y_pred == 0) & (y_true_expanded == 1)).sum(axis=1)
+        
+        tpr = np.divide(tp, tp + fn, out=np.zeros_like(tp, dtype=float), where=(tp + fn) > 0)
+        tnr = np.divide(tn, tn + fp, out=np.zeros_like(tn, dtype=float), where=(tn + fp) > 0)
+        
+        youden_scores = tpr + tnr - 1
+        best_idx = np.argmax(youden_scores)
+        return float(thresholds[best_idx])
+        
+    else:
+        raise ValueError(f"Unknown criterion: {criterion}. Use 'f1' or 'youden'.")
 
 
 def clear_results(results_dir="results"):
